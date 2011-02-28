@@ -58,11 +58,12 @@
         n   = +n;
         cfg = YAHOO.lang.merge(YAHOO.util.Number.format.defaults, (cfg || {}));
 
-        var absN   = Math.abs(n),
-            places = cfg.decimalPlaces,
+        var stringN = n+'',
+            absN   = Math.abs(n),
+            places = cfg.decimalPlaces || 0,
             sep    = cfg.thousandsSeparator,
             negFmt = cfg.negativeFormat || ('-' + cfg.format),
-            s, bits, i;
+            s, bits, i, precision;
 
         if (negFmt.indexOf('#') > -1) {
             // for backward compatibility of negativeFormat supporting '-#'
@@ -84,10 +85,33 @@
                 s = "0";
             }
         } else {
-            // There is a bug in IE's toFixed implementation:
-            // for n in {(-0.94, -0.5], [0.5, 0.94)} n.toFixed() returns 0
-            // instead of -1 and 1. Manually handle that case.
-            s = absN < 1 && absN >= 0.5 && !places ? '1' : absN.toFixed(places);
+            // Avoid toFixed on floats:
+            // Bug 2528976
+            // Bug 2528977
+            var unfloatedN = absN+'';
+            if(places > 0 || unfloatedN.indexOf('.') > 0) {
+                var power = Math.pow(10, places);
+                s = Math.round(absN * power) / power + '';
+                var dot = s.indexOf('.'),
+                    padding, zeroes;
+                
+                // Add padding
+                if(dot < 0) {
+                    padding = places;
+                    zeroes = (Math.pow(10, padding) + '').substring(1);
+                    if(places > 0) {
+                        s = s + '.' + zeroes;
+                    }
+                }
+                else {
+                    padding = places - (s.length - dot - 1);
+                    zeroes = (Math.pow(10, padding) + '').substring(1);
+                    s = s + zeroes;
+                }
+            }
+            else {
+                s = absN.toFixed(places)+'';
+            }
         }
 
         bits  = s.split(/\D/);
@@ -372,7 +396,8 @@ var xPad=function (x, pad, r)
      *  </dl>
      *  More locales may be added by subclassing of YAHOO.util.DateLocale.
      *  See YAHOO.util.DateLocale for more information.
-     * @return {String} Formatted date for display.
+     * @return {HTML} Formatted date for display. Non-date values are passed
+     * through as-is.
      * @sa YAHOO.util.DateLocale
      */
     format : function (oDate, oConfig, sLocale) {

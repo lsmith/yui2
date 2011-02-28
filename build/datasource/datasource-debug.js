@@ -313,7 +313,56 @@ _nTransactionId : 0,
 // DataSourceBase private static methods
 //
 /////////////////////////////////////////////////////////////////////////////
+/**
+ * Clones object literal or array of object literals.
+ *
+ * @method DataSourceBase._cloneObject
+ * @param o {Object} Object.
+ * @private
+ * @static
+ */
+_cloneObject: function(o) {
+    if(!lang.isValue(o)) {
+        return o;
+    }
 
+    var copy = {};
+
+    if(o instanceof YAHOO.widget.BaseCellEditor) {
+        copy = o;
+    }
+    else if(Object.prototype.toString.apply(o) === "[object RegExp]") {
+        copy = o;
+    }
+    else if(lang.isFunction(o)) {
+        copy = o;
+    }
+    else if(lang.isArray(o)) {
+        var array = [];
+        for(var i=0,len=o.length;i<len;i++) {
+            array[i] = DS._cloneObject(o[i]);
+        }
+        copy = array;
+    }
+    else if(lang.isObject(o)) {
+        for (var x in o){
+            if(lang.hasOwnProperty(o, x)) {
+                if(lang.isValue(o[x]) && lang.isObject(o[x]) || lang.isArray(o[x])) {
+                    copy[x] = DS._cloneObject(o[x]);
+                }
+                else {
+                    copy[x] = o[x];
+                }
+            }
+        }
+    }
+    else {
+        copy = o;
+    }
+
+    return copy;
+},
+    
 /**
  * Get an XPath-specified value for a given field from an XML node or document.
  *
@@ -457,7 +506,7 @@ parseDate : function(oData) {
     var date = null;
     
     //Convert to date
-    if(!(oData instanceof Date)) {
+    if(lang.isValue(oData) && !(oData instanceof Date)) {
         date = new Date(oData);
     }
     else {
@@ -759,6 +808,7 @@ addToCache : function(oRequest, oResponse) {
     }
 
     // Add to cache in the newest position, at the end of the array
+    oResponse = DS._cloneObject(oResponse);
     var oCacheElem = {request:oRequest,response:oResponse};
     aCache[aCache.length] = oCacheElem;
     this.fireEvent("responseCacheEvent", {request:oRequest,response:oResponse});
@@ -1692,7 +1742,7 @@ parseJSONData : function(oRequest, oFullResponse) {
 
                         for (j = fieldParsers.length - 1; j >= 0; --j) {
                             var p = fieldParsers[j].key;
-                            rec[p] = fieldParsers[j].parser(rec[p]);
+                            rec[p] = fieldParsers[j].parser.call(this, rec[p]);
                             if (rec[p] === undefined) {
                                 rec[p] = null;
                             }
@@ -1940,7 +1990,7 @@ makeConnection : function(oRequest, oCallback, oCaller) {
     // forward the return value to the handler
     
     
-    var oRawResponse = (this.scope) ? this.liveData.call(this.scope, oRequest, this) : this.liveData(oRequest);
+    var oRawResponse = (this.scope) ? this.liveData.call(this.scope, oRequest, this, oCallback) : this.liveData(oRequest, oCallback);
     
     // Try to sniff data type if it has not been defined
     if(this.responseType === DS.TYPE_UNKNOWN) {
@@ -2545,33 +2595,26 @@ util.DataSource = function(oLiveData, oConfigs) {
     var dataType = oConfigs.dataType;
     if(dataType) {
         if(dataType == DS.TYPE_LOCAL) {
-            lang.augmentObject(util.DataSource, util.LocalDataSource);
-            return new util.LocalDataSource(oLiveData, oConfigs);            
+            return new util.LocalDataSource(oLiveData, oConfigs);
         }
         else if(dataType == DS.TYPE_XHR) {
-            lang.augmentObject(util.DataSource, util.XHRDataSource);
             return new util.XHRDataSource(oLiveData, oConfigs);            
         }
         else if(dataType == DS.TYPE_SCRIPTNODE) {
-            lang.augmentObject(util.DataSource, util.ScriptNodeDataSource);
             return new util.ScriptNodeDataSource(oLiveData, oConfigs);            
         }
         else if(dataType == DS.TYPE_JSFUNCTION) {
-            lang.augmentObject(util.DataSource, util.FunctionDataSource);
             return new util.FunctionDataSource(oLiveData, oConfigs);            
         }
     }
     
     if(YAHOO.lang.isString(oLiveData)) { // strings default to xhr
-        lang.augmentObject(util.DataSource, util.XHRDataSource);
         return new util.XHRDataSource(oLiveData, oConfigs);
     }
     else if(YAHOO.lang.isFunction(oLiveData)) {
-        lang.augmentObject(util.DataSource, util.FunctionDataSource);
         return new util.FunctionDataSource(oLiveData, oConfigs);
     }
     else { // ultimate default is local
-        lang.augmentObject(util.DataSource, util.LocalDataSource);
         return new util.LocalDataSource(oLiveData, oConfigs);
     }
 };
@@ -2580,6 +2623,7 @@ util.DataSource = function(oLiveData, oConfigs) {
 lang.augmentObject(util.DataSource, DS);
 
 })();
+
 /****************************************************************************/
 /****************************************************************************/
 /****************************************************************************/
@@ -2640,11 +2684,12 @@ lang.augmentObject(util.DataSource, DS);
         n   = +n;
         cfg = YAHOO.lang.merge(YAHOO.util.Number.format.defaults, (cfg || {}));
 
-        var absN   = Math.abs(n),
-            places = cfg.decimalPlaces,
+        var stringN = n+'',
+            absN   = Math.abs(n),
+            places = cfg.decimalPlaces || 0,
             sep    = cfg.thousandsSeparator,
             negFmt = cfg.negativeFormat || ('-' + cfg.format),
-            s, bits, i;
+            s, bits, i, precision;
 
         if (negFmt.indexOf('#') > -1) {
             // for backward compatibility of negativeFormat supporting '-#'
@@ -2666,10 +2711,33 @@ lang.augmentObject(util.DataSource, DS);
                 s = "0";
             }
         } else {
-            // There is a bug in IE's toFixed implementation:
-            // for n in {(-0.94, -0.5], [0.5, 0.94)} n.toFixed() returns 0
-            // instead of -1 and 1. Manually handle that case.
-            s = absN < 1 && absN >= 0.5 && !places ? '1' : absN.toFixed(places);
+            // Avoid toFixed on floats:
+            // Bug 2528976
+            // Bug 2528977
+            var unfloatedN = absN+'';
+            if(places > 0 || unfloatedN.indexOf('.') > 0) {
+                var power = Math.pow(10, places);
+                s = Math.round(absN * power) / power + '';
+                var dot = s.indexOf('.'),
+                    padding, zeroes;
+                
+                // Add padding
+                if(dot < 0) {
+                    padding = places;
+                    zeroes = (Math.pow(10, padding) + '').substring(1);
+                    if(places > 0) {
+                        s = s + '.' + zeroes;
+                    }
+                }
+                else {
+                    padding = places - (s.length - dot - 1);
+                    zeroes = (Math.pow(10, padding) + '').substring(1);
+                    s = s + zeroes;
+                }
+            }
+            else {
+                s = absN.toFixed(places)+'';
+            }
         }
 
         bits  = s.split(/\D/);
@@ -2954,7 +3022,8 @@ var xPad=function (x, pad, r)
      *  </dl>
      *  More locales may be added by subclassing of YAHOO.util.DateLocale.
      *  See YAHOO.util.DateLocale for more information.
-     * @return {String} Formatted date for display.
+     * @return {HTML} Formatted date for display. Non-date values are passed
+     * through as-is.
      * @sa YAHOO.util.DateLocale
      */
     format : function (oDate, oConfig, sLocale) {
@@ -3117,4 +3186,5 @@ var xPad=function (x, pad, r)
  YAHOO.util.DateLocale['en-AU'] = YAHOO.lang.merge(YAHOO.util.DateLocale['en']);
 
 })();
+
 YAHOO.register("datasource", YAHOO.util.DataSource, {version: "@VERSION@", build: "@BUILD@"});

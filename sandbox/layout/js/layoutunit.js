@@ -474,7 +474,7 @@
             }
 
             this._collapsing = true;
-            this.setStyle('zIndex', this.get('parent')._zIndex + 1);
+            this.setStyle('zIndex', this._zIndex);
 
             if (this._anim) {
                 this.setStyle('display', 'none');
@@ -527,7 +527,7 @@
                 };
                 var expand = function() {
                     this._collapsing = false;
-                    this.setStyle('zIndex', this.get('parent')._zIndex);
+                    this.setStyle('zIndex', this._zIndex);
                     this.set('width', this._lastWidth);
                     this.set('height', this._lastHeight);
                     this._collapsed = false;
@@ -547,6 +547,7 @@
                 this._collapsing = false;
                 this._toggleClip();
                 this._collapsed = false;
+                this._zIndex = this.getStyle('zIndex');
                 this.setStyle('zIndex', this.get('parent')._zIndex);
                 this.setStyle('display', 'block');
                 this.set('width', this._lastWidth);
@@ -595,6 +596,7 @@
                 this._lastLeft = 0;
                 this.set('left', 0);
             }
+            this._zIndex = this.getStyle('zIndex');
             this.setStyle('zIndex', this.get('parent')._zIndex + 1);
             var pos = this.get('position');
 
@@ -667,7 +669,7 @@
         },
 		/**
         * @property loadHandler
-        * @description Callback method for the YUI Connection Manager used for load the body using AJAX
+        * @description Callback method for the YUI Connection Manager used for load the body using AJAX. NOTE: e.responseText is loaded via innerHTML.
         * @type Object
         */
 		loadHandler: {
@@ -1064,7 +1066,8 @@
             });
             /**
             * @attribute header
-            * @description The text to use as the Header of the Unit
+            * @description The html to use as the Header of the Unit (sets via innerHTML)
+            * @type {HTML}
             */
             this.setAttributeConfig('header', {
                 value: attr.header || false,
@@ -1108,7 +1111,8 @@
             });
             /**
             * @attribute body
-            * @description The content for the body. If we find an element in the page with an id that matches the passed option we will move that element into the body of this unit.
+            * @description The content for the body. If we find an element in the page with an id that matches the passed option we will move that element into the body of this unit. (sets via innerHTML)
+            * @type {HTML}
             */
             this.setAttributeConfig('body', {
                 value: attr.body || false,
@@ -1152,7 +1156,8 @@
 
             /**
             * @attribute footer
-            * @description The content for the footer. If we find an element in the page with an id that matches the passed option we will move that element into the footer of this unit.
+            * @description The content for the footer. If we find an element in the page with an id that matches the passed option we will move that element into the footer of this unit. (sets via innerHTML)
+            * @type {HTML}
             */
             this.setAttributeConfig('footer', {
                 value: attr.footer || false,
@@ -1207,7 +1212,11 @@
                     if (!this.header && close) {
                         this._createHeader();
                     }
-                    var c = Dom.getElementsByClassName('close', 'div', this.header)[0];
+                    if (!this.header) {
+                        return;
+                    }
+                    var c = this.header ? Dom.getElementsByClassName('close', 'div', this.header)[0] : null;
+                    
                     if (close) {
                         //Force some header text if there isn't any
                         if (!this.get('header')) {
@@ -1244,7 +1253,11 @@
                     if (!this.header && collapse) {
                         this._createHeader();
                     }
-                    var c = Dom.getElementsByClassName('collapse', 'div', this.header)[0];
+                    if (!this.header) {
+                        return;
+                    }
+                    var c = this.header ? Dom.getElementsByClassName('collapse', 'div', this.header)[0] : null;
+                    
                     if (collapse) {
                         //Force some header text if there isn't any
                         if (!this.get('header')) {
@@ -1514,7 +1527,7 @@
                 par.removeListener('resize', this.resize, this, true);
             }
             this.unsubscribeAll();
-            Event.purgeElement(this.get('element'));
+            Event.purgeElement(this.get('element'), true);
             this.get('parentNode').removeChild(this.get('element'));
 
             delete YAHOO.widget.LayoutUnit._instances[this.get('id')];

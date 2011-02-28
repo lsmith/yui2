@@ -132,11 +132,13 @@ if(!YAHOO.widget.Logger) {
      * assigned to an unknown category, creates a new category. If the log message is
      * from an unknown source, creates a new source.  If browser console is enabled,
      * outputs the log message to browser console.
+     * Note: the LogReader adds the message, category, and source to the DOM
+     * as HTML.
      *
      * @method log
-     * @param sMsg {String} The log message.
-     * @param sCategory {String} Category of log message, or null.
-     * @param sSource {String} Source of LogWriter, or null if global.
+     * @param sMsg {HTML} The log message.
+     * @param sCategory {HTML} Category of log message, or null.
+     * @param sSource {HTML} Source of LogWriter, or null if global.
      */
     YAHOO.widget.Logger.log = function(sMsg, sCategory, sSource) {
         if(this.loggerEnabled) {
@@ -410,7 +412,8 @@ if(!YAHOO.widget.Logger) {
      * @private
      */
     YAHOO.widget.Logger._printToBrowserConsole = function(oEntry) {
-        if(window.console && console.log) {
+        if ((window.console && console.log) ||
+            (window.opera && opera.postError)) {
             var category = oEntry.category;
             var label = oEntry.category.substring(0,4).toUpperCase();
 
@@ -433,12 +436,11 @@ if(!YAHOO.widget.Logger) {
                 elapsedTime + "ms): " +
                 oEntry.source + ": ";
 
-            // for bug 1987607
-            if (YAHOO.env.ua.webkit) {
-                output += oEntry.msg;
+            if (window.console) {
+                console.log(output, oEntry.msg);
+            } else {
+                opera.postError(output + oEntry.msg);
             }
-
-            console.log(output, oEntry.msg);
         }
     };
 

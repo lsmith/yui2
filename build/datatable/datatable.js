@@ -164,9 +164,286 @@ YAHOO.util.Chain.prototype = {
 };
 YAHOO.lang.augmentProto(YAHOO.util.Chain,YAHOO.util.EventProvider);
 
+/**
+ * Augments the Event Utility with a <code>delegate</code> method that 
+ * facilitates easy creation of delegated event listeners.  (Note: Using CSS 
+ * selectors as the filtering criteria for delegated event listeners requires 
+ * inclusion of the Selector Utility.)
+ *
+ * @module event-delegate
+ * @title Event Utility Event Delegation Module
+ * @namespace YAHOO.util
+ * @requires event
+ */
+
+(function () {
+
+    var Event = YAHOO.util.Event,
+        Lang = YAHOO.lang,
+        delegates = [],
+
+
+        getMatch = function(el, selector, container) {
+        
+            var returnVal;
+        
+            if (!el || el === container) {
+                returnVal = false;
+            }
+            else {
+                returnVal = YAHOO.util.Selector.test(el, selector) ? el: getMatch(el.parentNode, selector, container);
+            }
+        
+            return returnVal;
+        
+        };
+
+
+    Lang.augmentObject(Event, {
+
+        /**
+         * Creates a delegate function used to call event listeners specified 
+         * via the <code>YAHOO.util.Event.delegate</code> method.
+         *
+         * @method _createDelegate
+         *
+         * @param {Function} fn        The method (event listener) to call.
+         * @param {Function|string} filter Function or CSS selector used to 
+         * determine for what element(s) the event listener should be called.        
+         * @param {Object}   obj    An arbitrary object that will be 
+         *                             passed as a parameter to the listener.
+         * @param {Boolean|object}  overrideContext  If true, the value of the 
+         *                             obj parameter becomes the execution context
+         *                          of the listener. If an object, this object
+         *                          becomes the execution context.
+         * @return {Function} Function that will call the event listener 
+         * specified by the <code>YAHOO.util.Event.delegate</code> method.
+         * @private
+         * @for Event
+         * @static
+         */
+        _createDelegate: function (fn, filter, obj, overrideContext) {
+
+            return function (event) {
+
+                var container = this,
+                    target = Event.getTarget(event),
+                    selector = filter,
+
+                    //    The user might have specified the document object 
+                    //    as the delegation container, in which case it is not 
+                    //    nessary to scope the provided CSS selector(s) to the 
+                    //    delegation container
+                    bDocument = (container.nodeType === 9),
+
+                    matchedEl,
+                    context,
+                    sID,
+                    sIDSelector;
+
+
+                if (Lang.isFunction(filter)) {
+                    matchedEl = filter(target);
+                }
+                else if (Lang.isString(filter)) {
+
+                    if (!bDocument) {
+
+                        sID = container.id;
+
+                        if (!sID) {
+                            sID = Event.generateId(container);
+                        }                        
+
+                        //    Scope all selectors to the container
+                        sIDSelector = ("#" + sID + " ");
+                        selector = (sIDSelector + filter).replace(/,/gi, ("," + sIDSelector));
+
+                    }
+
+
+                    if (YAHOO.util.Selector.test(target, selector)) {
+                        matchedEl = target;
+                    }
+                    else if (YAHOO.util.Selector.test(target, ((selector.replace(/,/gi, " *,")) + " *"))) {
+
+                        //    The target is a descendant of an element matching 
+                        //    the selector, so crawl up to find the ancestor that 
+                        //    matches the selector
+
+                        matchedEl = getMatch(target, selector, container);
+
+                    }
+
+                }
+
+
+                if (matchedEl) {
+
+                    //    The default context for delegated listeners is the 
+                    //    element that matched the filter.
+
+                    context = matchedEl;
+
+                    if (overrideContext) {
+                        if (overrideContext === true) {
+                            context = obj;
+                        } else {
+                            context = overrideContext;
+                        }
+                    }
+
+                    //    Call the listener passing in the container and the 
+                    //    element that matched the filter in case the user 
+                    //    needs those.
+
+                    return fn.call(context, event, matchedEl, container, obj);
+
+                }
+
+            };
+
+        },
+
+
+        /**
+         * Appends a delegated event listener.  Delegated event listeners 
+         * receive three arguments by default: the DOM event, the element  
+         * specified by the filtering function or CSS selector, and the 
+         * container element (the element to which the event listener is 
+         * bound).  (Note: Using the delegate method requires the event-delegate 
+         * module.  Using CSS selectors as the filtering criteria for delegated 
+         * event listeners requires inclusion of the Selector Utility.)
+         *
+         * @method delegate
+         *
+         * @param {String|HTMLElement|Array|NodeList} container An id, an element 
+         *  reference, or a collection of ids and/or elements to assign the 
+         *  listener to.
+         * @param {String}   type     The type of event listener to append
+         * @param {Function} fn        The method the event invokes
+         * @param {Function|string} filter Function or CSS selector used to 
+         * determine for what element(s) the event listener should be called. 
+         * When a function is specified, the function should return an 
+         * HTML element.  Using a CSS Selector requires the inclusion of the 
+         * CSS Selector Utility.
+         * @param {Object}   obj    An arbitrary object that will be 
+         *                             passed as a parameter to the listener
+         * @param {Boolean|object}  overrideContext  If true, the value of the obj parameter becomes
+         *                             the execution context of the listener. If an
+         *                             object, this object becomes the execution
+         *                             context.
+         * @return {Boolean} Returns true if the action was successful or defered,
+         *                   false if one or more of the elements 
+         *                   could not have the listener attached,
+         *                   or if the operation throws an exception.
+         * @static
+         * @for Event
+         */
+        delegate: function (container, type, fn, filter, obj, overrideContext) {
+
+            var sType = type,
+                fnMouseDelegate,
+                fnDelegate;
+
+
+            if (Lang.isString(filter) && !YAHOO.util.Selector) {
+                return false;
+            }
+
+
+            if (type == "mouseenter" || type == "mouseleave") {
+
+                if (!Event._createMouseDelegate) {
+                    return false;
+                }
+
+                //    Look up the real event--either mouseover or mouseout
+                sType = Event._getType(type);
+
+                fnMouseDelegate = Event._createMouseDelegate(fn, obj, overrideContext);
+
+                fnDelegate = Event._createDelegate(function (event, matchedEl, container) {
+
+                    return fnMouseDelegate.call(matchedEl, event, container);
+
+                }, filter, obj, overrideContext);
+
+            }
+            else {
+
+                fnDelegate = Event._createDelegate(fn, filter, obj, overrideContext);
+
+            }
+
+            delegates.push([container, sType, fn, fnDelegate]);
+            
+            return Event.on(container, sType, fnDelegate);
+
+        },
+
+
+        /**
+         * Removes a delegated event listener.
+         *
+         * @method removeDelegate
+         *
+         * @param {String|HTMLElement|Array|NodeList} container An id, an element 
+         *  reference, or a collection of ids and/or elements to remove
+         *  the listener from.
+         * @param {String} type The type of event to remove.
+         * @param {Function} fn The method the event invokes.  If fn is
+         *  undefined, then all event listeners for the type of event are 
+         *  removed.
+         * @return {boolean} Returns true if the unbind was successful, false 
+         *  otherwise.
+         * @static
+         * @for Event
+         */
+        removeDelegate: function (container, type, fn) {
+
+            var sType = type,
+                returnVal = false,
+                index,
+                cacheItem;
+
+            //    Look up the real event--either mouseover or mouseout
+            if (type == "mouseenter" || type == "mouseleave") {
+                sType = Event._getType(type);
+            }
+
+            index = Event._getCacheIndex(delegates, container, sType, fn);
+
+            if (index >= 0) {
+                cacheItem = delegates[index];
+            }
+
+
+            if (container && cacheItem) {
+
+                returnVal = Event.removeListener(cacheItem[0], cacheItem[1], cacheItem[3]);
+
+                if (returnVal) {
+                    delete delegates[index][2];
+                    delete delegates[index][3];
+                    delegates.splice(index, 1);
+                }        
+        
+            }
+
+            return returnVal;
+
+        }
+        
+    });
+
+}());
+
 /****************************************************************************/
 /****************************************************************************/
 /****************************************************************************/
+
+var Dom = YAHOO.util.Dom;
 
 /**
  * The ColumnSet class defines and manages a DataTable's Columns,
@@ -180,7 +457,7 @@ YAHOO.lang.augmentProto(YAHOO.util.Chain,YAHOO.util.EventProvider);
  * the THEAD.
  */
 YAHOO.widget.ColumnSet = function(aDefinitions) {
-    this._sId = "yui-cs" + YAHOO.widget.ColumnSet._nCount;
+    this._sId = Dom.generateId(null, "yui-cs"); // "yui-cs" + YAHOO.widget.ColumnSet._nCount;
 
     // First clone the defs
     aDefinitions = YAHOO.widget.DataTable._cloneObject(aDefinitions);
@@ -665,7 +942,7 @@ YAHOO.widget.ColumnSet.prototype = {
  * @param oConfigs {Object} Object literal of definitions.
  */
 YAHOO.widget.Column = function(oConfigs) {
-    this._sId = "yui-col" + YAHOO.widget.Column._nCount;
+    this._sId = Dom.generateId(null, "yui-col"); // "yui-col" + YAHOO.widget.Column._nCount;
     
     // Object literal defines Column attributes
     if(oConfigs && YAHOO.lang.isObject(oConfigs)) {
@@ -678,7 +955,7 @@ YAHOO.widget.Column = function(oConfigs) {
 
     // Assign a key if not found
     if(!YAHOO.lang.isValue(this.key)) {
-        this.key = "yui-dt-col" + YAHOO.widget.Column._nCount;
+        this.key = Dom.generateId(null, "yui-dt-col"); //"yui-dt-col" + YAHOO.widget.Column._nCount;
     }
     
     // Assign a field if not found, defaults to key
@@ -873,10 +1150,11 @@ YAHOO.widget.Column.prototype = {
     /////////////////////////////////////////////////////////////////////////////
 
     /**
-     * Unique name, required.
+     * Unique name, required. If "label" property is not provided, the "key"
+     * value will be treated as markup and inserted into the DOM as innerHTML.
      *
      * @property key
-     * @type String
+     * @type String|HTML
      */
     key : null,
 
@@ -889,10 +1167,11 @@ YAHOO.widget.Column.prototype = {
     field : null,
 
     /**
-     * Text or HTML for display as Column's label in the TH element.
+     * Value displayed as Column header in the TH element. String value is
+     * treated as markup and inserted into the DOM as innerHTML.
      *
      * @property label
-     * @type String
+     * @type HTML
      */
     label : null,
 
@@ -995,13 +1274,15 @@ YAHOO.widget.Column.prototype = {
     dateOptions : null,
 
     /**
-     * Array of dropdown values for formatter:"dropdown" cases. Can either be a simple array (e.g.,
-     * ["Alabama","Alaska","Arizona","Arkansas"]) or a an array of objects (e.g.,
-     * [{label:"Alabama", value:"AL"}, {label:"Alaska", value:"AK"},
-     * {label:"Arizona", value:"AZ"}, {label:"Arkansas", value:"AR"}]).
+     * Array of dropdown values for formatter:"dropdown" cases. Can either be a
+     * simple array (e.g., ["Alabama","Alaska","Arizona","Arkansas"]) or a an
+     * array of objects (e.g., [{label:"Alabama", value:"AL"},
+     * {label:"Alaska", value:"AK"}, {label:"Arizona", value:"AZ"},
+     * {label:"Arkansas", value:"AR"}]). String values are treated as markup and
+     * inserted into the DOM as innerHTML.
      *
      * @property dropdownOptions
-     * @type String[] | Object[]
+     * @type HTML[] | Object[]
      */
     dropdownOptions : null,
      
@@ -1126,6 +1407,9 @@ YAHOO.widget.Column.prototype = {
         oDefinition.sortable = this.sortable;
         oDefinition.sortOptions = this.sortOptions;
         oDefinition.width = this.width;
+        
+        // Bug 2529147
+        oDefinition._calculatedWidth = this._calculatedWidth;
 
         return oDefinition;
     },
@@ -1292,6 +1576,8 @@ YAHOO.util.Sort = {
      * @param b {Object} Second sort argument.
      * @param desc {Boolean} True if sort direction is descending, false if
      * sort direction is ascending.
+     * @return {Boolean} Return -1 when a < b. Return 0 when a = b.
+     * Return 1 when a > b.
      */
     compare: function(a, b, desc) {
         if((a === null) || (typeof a == "undefined")) {
@@ -1649,21 +1935,7 @@ var lang   = YAHOO.lang,
  * @constructor
  */
 YAHOO.widget.RecordSet = function(data) {
-    // Internal variables
-    this._sId = "yui-rs" + widget.RecordSet._nCount;
-    widget.RecordSet._nCount++;
-    this._records = [];
-    //this._length = 0;
-
-    if(data) {
-        if(lang.isArray(data)) {
-            this.addRecords(data);
-        }
-        else if(lang.isObject(data)) {
-            this.addRecord(data);
-        }
-    }
-
+    this._init(data);
 };
 
 var RS = widget.RecordSet;
@@ -1709,6 +1981,51 @@ RS.prototype = {
     // Private methods
     //
     /////////////////////////////////////////////////////////////////////////////
+    
+    /**
+     * Initializer.
+     *
+     * @method _init
+     * @param data {Object || Object[]} An object literal or an array of data.
+     * @private
+     */
+    _init : function(data) {
+        // Internal variables
+        this._sId = Dom.generateId(null, "yui-rs");// "yui-rs" + widget.RecordSet._nCount;
+        widget.RecordSet._nCount++;
+        this._records = [];
+        //this._length = 0;
+
+        this._initEvents();
+
+        if(data) {
+            if(lang.isArray(data)) {
+                this.addRecords(data);
+            }
+            else if(lang.isObject(data)) {
+                this.addRecord(data);
+            }
+        }
+
+    },
+    
+    /**
+     * Initializes custom events.
+     *
+     * @method _initEvents
+     * @private
+     */
+    _initEvents : function() {
+        this.createEvent("recordAddEvent");
+        this.createEvent("recordsAddEvent");
+        this.createEvent("recordSetEvent");
+        this.createEvent("recordsSetEvent");
+        this.createEvent("recordUpdateEvent");
+        this.createEvent("recordDeleteEvent");
+        this.createEvent("recordsDeleteEvent");
+        this.createEvent("resetEvent");
+        this.createEvent("recordValueUpdateEvent");
+    },
 
     /**
      * Adds one Record to the RecordSet at the given index. If index is null,
@@ -2023,7 +2340,7 @@ RS.prototype = {
         if (a.length && !added.length) {
         }
 
-        return added.length > 1 ? added : added[0];
+        return added;
     },
 
     /**
@@ -2143,13 +2460,11 @@ RS.prototype = {
      *
      * @method deleteRecord
      * @param index {Number} Record's RecordSet position index.
-     * @param range {Number} (optional) How many Records to delete.
      * @return {Object} A copy of the data held by the deleted Record.
      */
     deleteRecord : function(index) {
         if(lang.isNumber(index) && (index > -1) && (index < this.getLength())) {
-            // Copy data from the Record for the event that gets fired later
-            var oData = widget.DataTable._cloneObject(this.getRecord(index).getData());
+            var oData = this.getRecord(index).getData();
             
             this._deleteRecord(index);
             this.fireEvent("recordDeleteEvent",{data:oData,index:index});
@@ -2176,15 +2491,16 @@ RS.prototype = {
         }
         if(lang.isNumber(index) && (index > -1) && (index < this.getLength())) {
             var recordsToDelete = this.getRecords(index, range);
-            // Copy data from each Record for the event that gets fired later
-            var deletedData = [];
+            var deletedData = [], // this mistakenly held Records, not data
+                deletedObjects = []; // this passes data only
             
             for(var i=0; i<recordsToDelete.length; i++) {
-                deletedData[deletedData.length] = widget.DataTable._cloneObject(recordsToDelete[i]);
+                deletedData[deletedData.length] = recordsToDelete[i]; // backward compatibility
+                deletedObjects[deletedObjects.length] = recordsToDelete[i].getData();
             }
             this._deleteRecord(index, range);
 
-            this.fireEvent("recordsDeleteEvent",{data:deletedData,index:index});
+            this.fireEvent("recordsDeleteEvent",{data:deletedData,deletedData:deletedObjects,index:index});
 
             return deletedData;
         }
@@ -2259,7 +2575,7 @@ lang.augmentProto(RS, util.EventProvider);
  * Fired when a Record is deleted from the RecordSet.
  *
  * @event recordDeleteEvent
- * @param oArgs.data {Object} A copy of the data held by the Record,
+ * @param oArgs.data {Object} The data held by the deleted Record,
  * or an array of data object literals if multiple Records were deleted at once.
  * @param oArgs.index {Object} Index of the deleted Record.
  */
@@ -2268,8 +2584,8 @@ lang.augmentProto(RS, util.EventProvider);
  * Fired when multiple Records are deleted from the RecordSet at once.
  *
  * @event recordsDeleteEvent
- * @param oArgs.data {Object[]} An array of data object literals copied
- * from the Records.
+ * @param oArgs.data {Object[]} An array of deleted Records.
+ * @param oArgs.deletedData {Object[]} An array of deleted data.
  * @param oArgs.index {Object} Index of the first deleted Record.
  */
 
@@ -2310,7 +2626,7 @@ lang.augmentProto(RS, util.EventProvider);
  */
 YAHOO.widget.Record = function(oLiteral) {
     this._nCount = widget.Record._nCount;
-    this._sId = "yui-rec" + this._nCount;
+    this._sId = Dom.generateId(null, "yui-rec");//"yui-rec" + this._nCount;
     widget.Record._nCount++;
     this._oData = {};
     if(lang.isObject(oLiteral)) {
@@ -2483,7 +2799,7 @@ YAHOO.widget.DataTable = function(elContainer,aColumnDefs,oDataSource,oConfigs) 
 
     // Internal vars
     this._nIndex = DT._nCount;
-    this._sId = "yui-dt"+this._nIndex;
+    this._sId = Dom.generateId(null, "yui-dt");// "yui-dt"+this._nIndex;
     this._oChainRender = new YAHOO.util.Chain();
     this._oChainRender.subscribe("end",this._onRenderChainEnd, this, true);
 
@@ -2773,6 +3089,17 @@ lang.augmentObject(DT, {
     CLASS_LAST : "yui-dt-last",
 
     /**
+     * Class name assigned to Record elements.
+     *
+     * @property DataTable.CLASS_REC
+     * @type String
+     * @static
+     * @final
+     * @default "yui-dt-rec"
+     */
+    CLASS_REC : "yui-dt-rec",
+
+    /**
      * Class name assigned to even elements.
      *
      * @property DataTable.CLASS_EVEN
@@ -3050,26 +3377,6 @@ lang.augmentObject(DT, {
      */
     _oDynStyles : {},
 
-    /**
-     * Element reference to shared Column drag target.
-     *
-     * @property DataTable._elColumnDragTarget
-     * @type HTMLElement
-     * @private
-     * @static 
-     */
-    _elColumnDragTarget : null,
-
-    /**
-     * Element reference to shared Column resizer proxy.
-     *
-     * @property DataTable._elColumnResizerProxy
-     * @type HTMLElement
-     * @private
-     * @static 
-     */
-    _elColumnResizerProxy : null,
-
     /////////////////////////////////////////////////////////////////////////
     //
     // Private static methods
@@ -3084,14 +3391,17 @@ lang.augmentObject(DT, {
      * @private
      * @static     
      */
-    _cloneObject : function(o) {
+    _cloneObject: function(o) {
         if(!lang.isValue(o)) {
             return o;
         }
-        
+
         var copy = {};
-        
+
         if(o instanceof YAHOO.widget.BaseCellEditor) {
+            copy = o;
+        }
+        else if(Object.prototype.toString.apply(o) === "[object RegExp]") {
             copy = o;
         }
         else if(lang.isFunction(o)) {
@@ -3104,7 +3414,7 @@ lang.augmentObject(DT, {
             }
             copy = array;
         }
-        else if(lang.isObject(o)) { 
+        else if(lang.isObject(o)) {
             for (var x in o){
                 if(lang.hasOwnProperty(o, x)) {
                     if(lang.isValue(o[x]) && lang.isObject(o[x]) || lang.isArray(o[x])) {
@@ -3119,87 +3429,8 @@ lang.augmentObject(DT, {
         else {
             copy = o;
         }
-    
+
         return copy;
-    },
-
-    /**
-     * Destroys shared Column drag target.
-     *
-     * @method DataTable._destroyColumnDragTargetEl
-     * @private
-     * @static 
-     */
-    _destroyColumnDragTargetEl : function() {
-        if(DT._elColumnDragTarget) {
-            var el = DT._elColumnDragTarget;
-            YAHOO.util.Event.purgeElement(el);
-            el.parentNode.removeChild(el);
-            DT._elColumnDragTarget = null;
-            
-        }
-    },
-
-    /**
-     * Creates HTML markup for shared Column drag target.
-     *
-     * @method DataTable._initColumnDragTargetEl
-     * @return {HTMLElement} Reference to Column drag target. 
-     * @private
-     * @static 
-     */
-    _initColumnDragTargetEl : function() {
-        if(!DT._elColumnDragTarget) {
-            // Attach Column drag target element as first child of body
-            var elColumnDragTarget = document.createElement('div');
-            elColumnDragTarget.className = DT.CLASS_COLTARGET;
-            elColumnDragTarget.style.display = "none";
-            document.body.insertBefore(elColumnDragTarget, document.body.firstChild);
-
-            // Internal tracker of Column drag target
-            DT._elColumnDragTarget = elColumnDragTarget;
-            
-        }
-        return DT._elColumnDragTarget;
-    },
-
-    /**
-     * Destroys shared Column resizer proxy.
-     *
-     * @method DataTable._destroyColumnResizerProxyEl
-     * @return {HTMLElement} Reference to Column resizer proxy.
-     * @private 
-     * @static 
-     */
-    _destroyColumnResizerProxyEl : function() {
-        if(DT._elColumnResizerProxy) {
-            var el = DT._elColumnResizerProxy;
-            YAHOO.util.Event.purgeElement(el);
-            el.parentNode.removeChild(el);
-            DT._elColumnResizerProxy = null;
-        }
-    },
-
-    /**
-     * Creates HTML markup for shared Column resizer proxy.
-     *
-     * @method DataTable._initColumnResizerProxyEl
-     * @return {HTMLElement} Reference to Column resizer proxy.
-     * @private 
-     * @static 
-     */
-    _initColumnResizerProxyEl : function() {
-        if(!DT._elColumnResizerProxy) {
-            // Attach Column resizer element as first child of body
-            var elColumnResizerProxy = document.createElement("div");
-            elColumnResizerProxy.id = "yui-dt-colresizerproxy"; // Needed for ColumnResizer
-            elColumnResizerProxy.className = DT.CLASS_RESIZERPROXY;
-            document.body.insertBefore(elColumnResizerProxy, document.body.firstChild);
-
-            // Internal tracker of Column resizer proxy
-            DT._elColumnResizerProxy = elColumnResizerProxy;
-        }
-        return DT._elColumnResizerProxy;
     },
 
     /**
@@ -3209,11 +3440,13 @@ lang.augmentObject(DT, {
      * @param el {HTMLElement} The element to format with markup.
      * @param oRecord {YAHOO.widget.Record} Record instance.
      * @param oColumn {YAHOO.widget.Column} Column instance.
-     * @param oData {Object | Boolean} Data value for the cell. By default, the value
-     * is what gets written to the BUTTON.
+     * @param oData {HTML} Data value for the cell. By default, the value
+     * is what gets written to the BUTTON. String values are treated as markup
+     * and inserted into the DOM with innerHTML.
+     * @param oDataTable {YAHOO.widget.DataTable} DataTable instance.
      * @static
      */
-    formatButton : function(el, oRecord, oColumn, oData) {
+    formatButton : function(el, oRecord, oColumn, oData, oDataTable) {
         var sValue = lang.isValue(oData) ? oData : "Click";
         //TODO: support YAHOO.widget.Button
         //if(YAHOO.widget.Button) {
@@ -3232,13 +3465,14 @@ lang.augmentObject(DT, {
      * @param el {HTMLElement} The element to format with markup.
      * @param oRecord {YAHOO.widget.Record} Record instance.
      * @param oColumn {YAHOO.widget.Column} Column instance.
-     * @param oData {Object | Boolean} Data value for the cell. Can be a simple
+     * @param oData {Object | Boolean | HTML} Data value for the cell. Can be a simple
      * Boolean to indicate whether checkbox is checked or not. Can be object literal
-     * {checked:bBoolean, label:sLabel}. Other forms of oData require a custom
-     * formatter.
+     * {checked:bBoolean, label:sLabel}. String values are treated as markup
+     * and inserted into the DOM with innerHTML.
+     * @param oDataTable {YAHOO.widget.DataTable} DataTable instance.
      * @static
      */
-    formatCheckbox : function(el, oRecord, oColumn, oData) {
+    formatCheckbox : function(el, oRecord, oColumn, oData, oDataTable) {
         var bChecked = oData;
         bChecked = (bChecked) ? " checked=\"checked\"" : "";
         el.innerHTML = "<input type=\"checkbox\"" + bChecked +
@@ -3253,10 +3487,12 @@ lang.augmentObject(DT, {
      * @param oRecord {YAHOO.widget.Record} Record instance.
      * @param oColumn {YAHOO.widget.Column} Column instance.
      * @param oData {Number} Data value for the cell.
+     * @param oDataTable {YAHOO.widget.DataTable} DataTable instance.
      * @static
      */
-    formatCurrency : function(el, oRecord, oColumn, oData) {
-        el.innerHTML = util.Number.format(oData, oColumn.currencyOptions || this.get("currencyOptions"));
+    formatCurrency : function(el, oRecord, oColumn, oData, oDataTable) {
+        var oDT = oDataTable || this;
+        el.innerHTML = util.Number.format(oData, oColumn.currencyOptions || oDT.get("currencyOptions"));
     },
 
     /**
@@ -3266,11 +3502,14 @@ lang.augmentObject(DT, {
      * @param el {HTMLElement} The element to format with markup.
      * @param oRecord {YAHOO.widget.Record} Record instance.
      * @param oColumn {YAHOO.widget.Column} Column instance.
-     * @param oData {Object} Data value for the cell, or null.
+     * @param oData {Object} Data value for the cell, or null. String values are
+     * treated as markup and inserted into the DOM with innerHTML.
+     * @param oDataTable {YAHOO.widget.DataTable} DataTable instance.
      * @static
      */
-    formatDate : function(el, oRecord, oColumn, oData) {
-        var oConfig = oColumn.dateOptions || this.get("dateOptions");
+    formatDate : function(el, oRecord, oColumn, oData, oDataTable) {
+        var oDT = oDataTable || this,
+            oConfig = oColumn.dateOptions || oDT.get("dateOptions");
         el.innerHTML = util.Date.format(oData, oConfig, oConfig.locale);
     },
 
@@ -3281,11 +3520,15 @@ lang.augmentObject(DT, {
      * @param el {HTMLElement} The element to format with markup.
      * @param oRecord {YAHOO.widget.Record} Record instance.
      * @param oColumn {YAHOO.widget.Column} Column instance.
-     * @param oData {Object} Data value for the cell, or null.
+     * @param oData {Object} Data value for the cell, or null. String values may
+     * be treated as markup and inserted into the DOM with innerHTML as element
+     * label.
+     * @param oDataTable {YAHOO.widget.DataTable} DataTable instance.
      * @static
      */
-    formatDropdown : function(el, oRecord, oColumn, oData) {
-        var selectedValue = (lang.isValue(oData)) ? oData : oRecord.getData(oColumn.field),
+    formatDropdown : function(el, oRecord, oColumn, oData, oDataTable) {
+        var oDT = oDataTable || this,
+            selectedValue = (lang.isValue(oData)) ? oData : oRecord.getData(oColumn.field),
             options = (lang.isArray(oColumn.dropdownOptions)) ?
                 oColumn.dropdownOptions : null,
 
@@ -3300,7 +3543,7 @@ lang.augmentObject(DT, {
             selectEl = el.appendChild(selectEl);
 
             // Add event listener
-            Ev.addListener(selectEl,"change",this._onDropdownChange,this);
+            Ev.addListener(selectEl,"change",oDT._onDropdownChange,oDT);
         }
 
         selectEl = collection[0];
@@ -3344,15 +3587,18 @@ lang.augmentObject(DT, {
      * @param el {HTMLElement} The element to format with markup.
      * @param oRecord {YAHOO.widget.Record} Record instance.
      * @param oColumn {YAHOO.widget.Column} Column instance.
-     * @param oData {Object} Data value for the cell, or null.
+     * @param oData {String} Data value for the cell, or null. Values are
+     * HTML-escaped.
+     * @param oDataTable {YAHOO.widget.DataTable} DataTable instance.
      * @static
      */
-    formatEmail : function(el, oRecord, oColumn, oData) {
+    formatEmail : function(el, oRecord, oColumn, oData, oDataTable) {
         if(lang.isString(oData)) {
+            oData = lang.escapeHTML(oData);
             el.innerHTML = "<a href=\"mailto:" + oData + "\">" + oData + "</a>";
         }
         else {
-            el.innerHTML = lang.isValue(oData) ? oData : "";
+            el.innerHTML = lang.isValue(oData) ? lang.escapeHTML(oData.toString()) : "";
         }
     },
 
@@ -3363,15 +3609,18 @@ lang.augmentObject(DT, {
      * @param el {HTMLElement} The element to format with markup.
      * @param oRecord {YAHOO.widget.Record} Record instance.
      * @param oColumn {YAHOO.widget.Column} Column instance.
-     * @param oData {Object} Data value for the cell, or null.
+     * @param oData {String} Data value for the cell, or null. Values are
+     * HTML-escaped
+     * @param oDataTable {YAHOO.widget.DataTable} DataTable instance.
      * @static
      */
-    formatLink : function(el, oRecord, oColumn, oData) {
+    formatLink : function(el, oRecord, oColumn, oData, oDataTable) {
         if(lang.isString(oData)) {
+            oData = lang.escapeHTML(oData);
             el.innerHTML = "<a href=\"" + oData + "\">" + oData + "</a>";
         }
         else {
-            el.innerHTML = lang.isValue(oData) ? oData : "";
+            el.innerHTML = lang.isValue(oData) ? lang.escapeHTML(oData.toString()) : "";
         }
     },
 
@@ -3383,10 +3632,12 @@ lang.augmentObject(DT, {
      * @param oRecord {YAHOO.widget.Record} Record instance.
      * @param oColumn {YAHOO.widget.Column} Column instance.
      * @param oData {Object} Data value for the cell, or null.
+     * @param oDataTable {YAHOO.widget.DataTable} DataTable instance.
      * @static
      */
-    formatNumber : function(el, oRecord, oColumn, oData) {
-        el.innerHTML = util.Number.format(oData, oColumn.numberOptions || this.get("numberOptions"));
+    formatNumber : function(el, oRecord, oColumn, oData, oDataTable) {
+        var oDT = oDataTable || this;
+        el.innerHTML = util.Number.format(oData, oColumn.numberOptions || oDT.get("numberOptions"));
     },
 
     /**
@@ -3397,13 +3648,15 @@ lang.augmentObject(DT, {
      * @param oRecord {YAHOO.widget.Record} Record instance.
      * @param oColumn {YAHOO.widget.Column} Column instance.
      * @param oData {Object} (Optional) Data value for the cell.
+     * @param oDataTable {YAHOO.widget.DataTable} DataTable instance.
      * @static
      */
-    formatRadio : function(el, oRecord, oColumn, oData) {
-        var bChecked = oData;
+    formatRadio : function(el, oRecord, oColumn, oData, oDataTable) {
+        var oDT = oDataTable || this,
+            bChecked = oData;
         bChecked = (bChecked) ? " checked=\"checked\"" : "";
         el.innerHTML = "<input type=\"radio\"" + bChecked +
-                " name=\""+this.getId()+"-col-" + oColumn.getSanitizedKey() + "\"" +
+                " name=\""+oDT.getId()+"-col-" + oColumn.getSanitizedKey() + "\"" +
                 " class=\"" + DT.CLASS_RADIO+ "\" />";
     },
 
@@ -3414,13 +3667,14 @@ lang.augmentObject(DT, {
      * @param el {HTMLElement} The element to format with markup.
      * @param oRecord {YAHOO.widget.Record} Record instance.
      * @param oColumn {YAHOO.widget.Column} Column instance.
-     * @param oData {Object} (Optional) Data value for the cell.
+     * @param oData {String} (Optional) Data value for the cell. Values are
+     * HTML-escaped.
+     * @param oDataTable {YAHOO.widget.DataTable} DataTable instance.
      * @static
      */
-    formatText : function(el, oRecord, oColumn, oData) {
+    formatText : function(el, oRecord, oColumn, oData, oDataTable) {
         var value = (lang.isValue(oData)) ? oData : "";
-        //TODO: move to util function
-        el.innerHTML = value.toString().replace(/&/g, "&#38;").replace(/</g, "&#60;").replace(/>/g, "&#62;");
+        el.innerHTML = lang.escapeHTML(value.toString());
     },
 
     /**
@@ -3430,11 +3684,13 @@ lang.augmentObject(DT, {
      * @param el {HTMLElement} The element to format with markup.
      * @param oRecord {YAHOO.widget.Record} Record instance.
      * @param oColumn {YAHOO.widget.Column} Column instance.
-     * @param oData {Object} (Optional) Data value for the cell.
+     * @param oData {Object} (Optional) Data value for the cell. Values are
+     * HTML-escaped.
+     * @param oDataTable {YAHOO.widget.DataTable} DataTable instance.
      * @static
      */
-    formatTextarea : function(el, oRecord, oColumn, oData) {
-        var value = (lang.isValue(oData)) ? oData : "",
+    formatTextarea : function(el, oRecord, oColumn, oData, oDataTable) {
+        var value = (lang.isValue(oData)) ? lang.escapeHTML(oData.toString()) : "",
             markup = "<textarea>" + value + "</textarea>";
         el.innerHTML = markup;
     },
@@ -3446,11 +3702,13 @@ lang.augmentObject(DT, {
      * @param el {HTMLElement} The element to format with markup.
      * @param oRecord {YAHOO.widget.Record} Record instance.
      * @param oColumn {YAHOO.widget.Column} Column instance.
-     * @param oData {Object} (Optional) Data value for the cell.
+     * @param oData {Object} (Optional) Data value for the cell. Values are
+     * HTML-escaped.
+     * @param oDataTable {YAHOO.widget.DataTable} DataTable instance.
      * @static
      */
-    formatTextbox : function(el, oRecord, oColumn, oData) {
-        var value = (lang.isValue(oData)) ? oData : "",
+    formatTextbox : function(el, oRecord, oColumn, oData, oDataTable) {
+        var value = (lang.isValue(oData)) ? lang.escapeHTML(oData.toString()) : "",
             markup = "<input type=\"text\" value=\"" + value + "\" />";
         el.innerHTML = markup;
     },
@@ -3462,10 +3720,12 @@ lang.augmentObject(DT, {
      * @param el {HTMLElement} The element to format with markup.
      * @param oRecord {YAHOO.widget.Record} Record instance.
      * @param oColumn {YAHOO.widget.Column} Column instance.
-     * @param oData {Object} (Optional) Data value for the cell.
+     * @param oData {HTML} (Optional) Data value for the cell. String values are
+     * treated as markup and inserted into the DOM with innerHTML.
+     * @param oDataTable {YAHOO.widget.DataTable} DataTable instance.
      * @static
      */
-    formatDefault : function(el, oRecord, oColumn, oData) {
+    formatDefault : function(el, oRecord, oColumn, oData, oDataTable) {
         el.innerHTML = oData === undefined ||
                        oData === null ||
                        (typeof oData === 'number' && isNaN(oData)) ?
@@ -3542,7 +3802,7 @@ initAttributes : function(oConfigs) {
 
     /**
     * @attribute summary
-    * @description Value for the SUMMARY attribute.
+    * @description String value for the SUMMARY attribute.
     * @type String
     * @default ""    
     */
@@ -3693,9 +3953,10 @@ initAttributes : function(oConfigs) {
 
     /**
     * @attribute caption
-    * @description Value for the CAPTION element. NB: Not supported in
+    * @description Value for the CAPTION element. String values are treated as
+    * markup and inserted into the DOM with innerHTML. NB: Not supported in
     * ScrollingDataTable.    
-    * @type String
+    * @type HTML
     */
     this.setAttributeConfig("caption", {
         value: null,
@@ -3729,17 +3990,17 @@ initAttributes : function(oConfigs) {
     });
 
     /**
-    * @attribute renderLoopSize 	 
+    * @attribute renderLoopSize      
     * @description A value greater than 0 enables DOM rendering of rows to be
     * executed from a non-blocking timeout queue and sets how many rows to be
     * rendered per timeout. Recommended for very large data sets.     
-    * @type Number 	 
-    * @default 0 	 
-    */ 	 
-     this.setAttributeConfig("renderLoopSize", { 	 
-         value: 0, 	 
-         validator: lang.isNumber 	 
-     }); 	 
+    * @type Number      
+    * @default 0      
+    */      
+     this.setAttributeConfig("renderLoopSize", {
+         value: 0,
+         validator: lang.isNumber
+     });
 
     /**
     * @attribute formatRow
@@ -3857,46 +4118,51 @@ initAttributes : function(oConfigs) {
     });
 
     /**
-     * @attribute MSG_EMPTY 	 
-     * @description Message to display if DataTable has no data.     
-     * @type String 	 
-     * @default "No records found." 	 
-     */ 	 
-     this.setAttributeConfig("MSG_EMPTY", { 	 
-         value: "No records found.", 	 
-         validator: lang.isString 	 
-     }); 	 
+     * @attribute MSG_EMPTY
+     * @description Message to display if DataTable has no data. String
+     * values are treated as markup and inserted into the DOM with innerHTML.
+     * @type HTML
+     * @default "No records found."
+     */
+     this.setAttributeConfig("MSG_EMPTY", {
+         value: "No records found.",
+         validator: lang.isString
+     });      
 
     /**
-     * @attribute MSG_LOADING	 
-     * @description Message to display while DataTable is loading data.
-     * @type String 	 
-     * @default "Loading..." 	 
-     */ 	 
-     this.setAttributeConfig("MSG_LOADING", { 	 
-         value: "Loading...", 	 
-         validator: lang.isString 	 
-     }); 	 
+     * @attribute MSG_LOADING
+     * @description Message to display while DataTable is loading data. String
+     * values are treated as markup and inserted into the DOM with innerHTML.
+     * @type HTML
+     * @default "Loading..."
+     */      
+     this.setAttributeConfig("MSG_LOADING", {
+         value: "Loading...",
+         validator: lang.isString
+     });      
 
     /**
-     * @attribute MSG_ERROR	 
-     * @description Message to display while DataTable has data error.
-     * @type String 	 
-     * @default "Data error." 	 
-     */ 	 
-     this.setAttributeConfig("MSG_ERROR", { 	 
-         value: "Data error.", 	 
-         validator: lang.isString 	 
-     }); 	 
+     * @attribute MSG_ERROR
+     * @description Message to display while DataTable has data error. String
+     * values are treated as markup and inserted into the DOM with innerHTML.
+     * @type HTML
+     * @default "Data error."
+     */      
+     this.setAttributeConfig("MSG_ERROR", {
+         value: "Data error.",
+         validator: lang.isString
+     });
 
     /**
-     * @attribute MSG_SORTASC 
-     * @description Message to display in tooltip to sort Column in ascending order.
-     * @type String 	 
-     * @default "Click to sort ascending" 	 
-     */ 	 
-     this.setAttributeConfig("MSG_SORTASC", { 	 
-         value: "Click to sort ascending", 	 
+     * @attribute MSG_SORTASC
+     * @description Message to display in tooltip to sort Column in ascending
+     * order. String values are treated as markup and inserted into the DOM as
+     * innerHTML.
+     * @type HTML
+     * @default "Click to sort ascending"
+     */      
+     this.setAttributeConfig("MSG_SORTASC", {      
+         value: "Click to sort ascending",      
          validator: lang.isString,
          method: function(sParam) {
             if(this._elThead) {
@@ -3910,13 +4176,15 @@ initAttributes : function(oConfigs) {
      });
 
     /**
-     * @attribute MSG_SORTDESC 
-     * @description Message to display in tooltip to sort Column in descending order.
-     * @type String 	 
-     * @default "Click to sort descending" 	 
-     */ 	 
-     this.setAttributeConfig("MSG_SORTDESC", { 	 
-         value: "Click to sort descending", 	 
+     * @attribute MSG_SORTDESC
+     * @description Message to display in tooltip to sort Column in descending
+     * order. String values are treated as markup and inserted into the DOM as
+     * innerHTML.
+     * @type HTML
+     * @default "Click to sort descending"
+     */      
+     this.setAttributeConfig("MSG_SORTDESC", {      
+         value: "Click to sort descending",      
          validator: lang.isString,
          method: function(sParam) {
             if(this._elThead) {
@@ -4132,6 +4400,24 @@ _elMsgTr : null,
 _elMsgTd : null,
 
 /**
+ * Element reference to shared Column drag target.
+ *
+ * @property _elColumnDragTarget
+ * @type HTMLElement
+ * @private
+ */
+_elColumnDragTarget : null,
+
+/**
+ * Element reference to shared Column resizer proxy.
+ *
+ * @property _elColumnResizerProxy
+ * @type HTMLElement
+ * @private
+ */
+_elColumnResizerProxy : null,
+
+/**
  * DataSource instance for the DataTable instance.
  *
  * @property _oDataSource
@@ -4256,13 +4542,13 @@ _disabled : false,
 clearTextSelection : function() {
     var sel;
     if(window.getSelection) {
-    	sel = window.getSelection();
+        sel = window.getSelection();
     }
     else if(document.getSelection) {
-    	sel = document.getSelection();
+        sel = document.getSelection();
     }
     else if(document.selection) {
-    	sel = document.selection;
+        sel = document.selection;
     }
     if(sel) {
         if(sel.empty) {
@@ -4584,7 +4870,8 @@ _destroyTableEl : function() {
  * Creates HTML markup CAPTION element.
  *
  * @method _initCaptionEl
- * @param sCaption {String} Text for caption.
+ * @param sCaption {HTML} Caption value. String values are treated as markup and
+ * inserted into the DOM with innerHTML.
  * @private
  */
 _initCaptionEl : function(sCaption) {
@@ -4624,7 +4911,15 @@ _initTableEl : function(elContainer) {
         if(this.get("caption")) {
             this._initCaptionEl(this.get("caption"));
         }
-    } 
+
+        // Set up mouseover/mouseout events via mouseenter/mouseleave delegation
+        Ev.delegate(this._elTable, "mouseenter", this._onTableMouseover, "thead ."+DT.CLASS_LABEL, this);
+        Ev.delegate(this._elTable, "mouseleave", this._onTableMouseout, "thead ."+DT.CLASS_LABEL, this);
+        Ev.delegate(this._elTable, "mouseenter", this._onTableMouseover, "tbody.yui-dt-data>tr>td", this);
+        Ev.delegate(this._elTable, "mouseleave", this._onTableMouseout, "tbody.yui-dt-data>tr>td", this);
+        Ev.delegate(this._elTable, "mouseenter", this._onTableMouseover, "tbody.yui-dt-message>tr>td", this);
+        Ev.delegate(this._elTable, "mouseleave", this._onTableMouseout, "tbody.yui-dt-message>tr>td", this);
+    }
 },
 
 /**
@@ -4766,11 +5061,12 @@ _initTheadEl : function(elTable) {
         // Set up DOM events for THEAD
         Ev.addListener(elThead, "focus", this._onTheadFocus, this);
         Ev.addListener(elThead, "keydown", this._onTheadKeydown, this);
-        Ev.addListener(elThead, "mouseover", this._onTableMouseover, this);
-        Ev.addListener(elThead, "mouseout", this._onTableMouseout, this);
         Ev.addListener(elThead, "mousedown", this._onTableMousedown, this);
         Ev.addListener(elThead, "mouseup", this._onTableMouseup, this);
         Ev.addListener(elThead, "click", this._onTheadClick, this);
+        
+        // Bug 2528073: mouseover/mouseout handled via mouseenter/mouseleave
+        // delegation at the TABLE level
 
         // Since we can't listen for click and dblclick on the same element...
         // Attach separately to THEAD and TBODY
@@ -4938,6 +5234,9 @@ _destroyDraggableColumns : function() {
             Dom.removeClass(oColumn.getThEl(), DT.CLASS_DRAGGABLE);       
         }
     }
+    
+    // Destroy column drag proxy
+    this._destroyColumnDragTargetEl();
 },
 
 /**
@@ -4954,12 +5253,50 @@ _initDraggableColumns : function() {
             oColumn = this._oColumnSet.tree[0][i];
             elTh = oColumn.getThEl();
             Dom.addClass(elTh, DT.CLASS_DRAGGABLE);
-            elDragTarget = DT._initColumnDragTargetEl();
+            elDragTarget = this._initColumnDragTargetEl();
             oColumn._dd = new YAHOO.widget.ColumnDD(this, oColumn, elTh, elDragTarget);
         }
     }
     else {
     }
+},
+
+/**
+ * Destroys shared Column drag target.
+ *
+ * @method _destroyColumnDragTargetEl
+ * @private
+ */
+_destroyColumnDragTargetEl : function() {
+    if(this._elColumnDragTarget) {
+        var el = this._elColumnDragTarget;
+        YAHOO.util.Event.purgeElement(el);
+        el.parentNode.removeChild(el);
+        this._elColumnDragTarget = null;
+    }
+},
+
+/**
+ * Creates HTML markup for shared Column drag target.
+ *
+ * @method _initColumnDragTargetEl
+ * @return {HTMLElement} Reference to Column drag target.
+ * @private
+ */
+_initColumnDragTargetEl : function() {
+    if(!this._elColumnDragTarget) {
+        // Attach Column drag target element as first child of body
+        var elColumnDragTarget = document.createElement('div');
+        elColumnDragTarget.id = this.getId() + "-coltarget";
+        elColumnDragTarget.className = DT.CLASS_COLTARGET;
+        elColumnDragTarget.style.display = "none";
+        document.body.insertBefore(elColumnDragTarget, document.body.firstChild);
+
+        // Internal tracker of Column drag target
+        this._elColumnDragTarget = elColumnDragTarget;
+
+    }
+    return this._elColumnDragTarget;
 },
 
 /**
@@ -4976,6 +5313,9 @@ _destroyResizeableColumns : function() {
             Dom.removeClass(aKeys[i].getThEl(), DT.CLASS_RESIZEABLE);
         }
     }
+
+    // Destroy resizer proxy
+    this._destroyColumnResizerProxyEl();
 },
 
 /**
@@ -5009,8 +5349,8 @@ _initResizeableColumns : function() {
                 elThResizer.className = DT.CLASS_RESIZER;
                 oColumn._elResizer = elThResizer;
 
-                // Create the resizer proxy, once globally
-                elResizerProxy = DT._initColumnResizerProxyEl();
+                // Create the resizer proxy, once per instance
+                elResizerProxy = this._initColumnResizerProxyEl();
                 oColumn._ddResizer = new YAHOO.util.ColumnResizer(
                         this, oColumn, elTh, elThResizer, elResizerProxy);
                 cancelClick = function(e) {
@@ -5022,6 +5362,43 @@ _initResizeableColumns : function() {
     }
     else {
     }
+},
+
+/**
+ * Destroys shared Column resizer proxy.
+ *
+ * @method _destroyColumnResizerProxyEl
+ * @return {HTMLElement} Reference to Column resizer proxy.
+ * @private
+ */
+_destroyColumnResizerProxyEl : function() {
+    if(this._elColumnResizerProxy) {
+        var el = this._elColumnResizerProxy;
+        YAHOO.util.Event.purgeElement(el);
+        el.parentNode.removeChild(el);
+        this._elColumnResizerProxy = null;
+    }
+},
+
+/**
+ * Creates HTML markup for shared Column resizer proxy.
+ *
+ * @method _initColumnResizerProxyEl
+ * @return {HTMLElement} Reference to Column resizer proxy.
+ * @private
+ */
+_initColumnResizerProxyEl : function() {
+    if(!this._elColumnResizerProxy) {
+        // Attach Column resizer element as first child of body
+        var elColumnResizerProxy = document.createElement("div");
+        elColumnResizerProxy.id = this.getId() + "-colresizerproxy"; // Needed for ColumnResizer
+        elColumnResizerProxy.className = DT.CLASS_RESIZERPROXY;
+        document.body.insertBefore(elColumnResizerProxy, document.body.firstChild);
+
+        // Internal tracker of Column resizer proxy
+        this._elColumnResizerProxy = elColumnResizerProxy;
+    }
+    return this._elColumnResizerProxy;
 },
 
 /**
@@ -5083,14 +5460,15 @@ _initTbodyEl : function(elTable) {
     
         // Set up DOM events for TBODY
         Ev.addListener(elTbody, "focus", this._onTbodyFocus, this);
-        Ev.addListener(elTbody, "mouseover", this._onTableMouseover, this);
-        Ev.addListener(elTbody, "mouseout", this._onTableMouseout, this);
         Ev.addListener(elTbody, "mousedown", this._onTableMousedown, this);
         Ev.addListener(elTbody, "mouseup", this._onTableMouseup, this);
         Ev.addListener(elTbody, "keydown", this._onTbodyKeydown, this);
         Ev.addListener(elTbody, "keypress", this._onTableKeypress, this);
         Ev.addListener(elTbody, "click", this._onTbodyClick, this);
-        
+
+        // Bug 2528073: mouseover/mouseout handled via mouseenter/mouseleave
+        // delegation at the TABLE level
+
         // Since we can't listen for click and dblclick on the same element...
         // Attach separately to THEAD and TBODY
         ///Ev.addListener(elTbody, "dblclick", this._onTableDblclick, this);
@@ -5146,13 +5524,14 @@ _initMsgTbodyEl : function(elTable) {
 
         // Set up DOM events for TBODY
         Ev.addListener(elMsgTbody, "focus", this._onTbodyFocus, this);
-        Ev.addListener(elMsgTbody, "mouseover", this._onTableMouseover, this);
-        Ev.addListener(elMsgTbody, "mouseout", this._onTableMouseout, this);
         Ev.addListener(elMsgTbody, "mousedown", this._onTableMousedown, this);
         Ev.addListener(elMsgTbody, "mouseup", this._onTableMouseup, this);
         Ev.addListener(elMsgTbody, "keydown", this._onTbodyKeydown, this);
         Ev.addListener(elMsgTbody, "keypress", this._onTableKeypress, this);
         Ev.addListener(elMsgTbody, "click", this._onTbodyClick, this);
+
+        // Bug 2528073: mouseover/mouseout handled via mouseenter/mouseleave
+        // delegation at the TABLE level
     }
 },
 
@@ -5182,14 +5561,14 @@ _initEvents : function () {
     this._initCellEditing();
 },
 
-/** 	 
-  * Initializes Column sorting. 	 
-  * 	 
-  * @method _initColumnSort 	 
-  * @private 	 
-  */ 	 
+/**      
+  * Initializes Column sorting.      
+  *      
+  * @method _initColumnSort      
+  * @private      
+  */      
 _initColumnSort : function() {
-    this.subscribe("theadCellClickEvent", this.onEventSortColumn); 	 
+    this.subscribe("theadCellClickEvent", this.onEventSortColumn);      
 
     // Backward compatibility
     var oSortedBy = this.get("sortedBy");
@@ -5203,12 +5582,12 @@ _initColumnSort : function() {
     }
 },
 
-/** 	 
-  * Initializes CellEditor integration. 	 
-  * 	 
-  * @method _initCellEditing 	 
-  * @private 	 
-  */ 	 
+/**      
+  * Initializes CellEditor integration.      
+  *      
+  * @method _initCellEditing      
+  * @private      
+  */      
 _initCellEditing : function() {
     this.subscribe("editorBlurEvent",function () {
         this.onEditorBlurEvent.apply(this,arguments);
@@ -5370,6 +5749,7 @@ _getTrTemplateEl : function (oRecord, index) {
             df.appendChild(elTd);
         }
         tr.appendChild(df);
+        tr.className = DT.CLASS_REC;
         this._elTrTemplate = tr;
         return tr;
     }   
@@ -5475,7 +5855,16 @@ _updateTrEl : function(elTr, oRecord) {
         elTr.style.display = '';
     }
     
-    elTr.id = oRecord.getId(); // Needed for Record association and tracking of FIRST/LAST
+     // Record-to-TR association and tracking of FIRST/LAST
+    var oldId = elTr.id,
+        newId = oRecord.getId();
+    if(this._sFirstTrId === oldId) {
+        this._sFirstTrId = newId;
+    }
+    if(this._sLastTrId === oldId) {
+        this._sLastTrId = newId;
+    }
+    elTr.id = newId;
     return elTr;
 },
 
@@ -5501,7 +5890,7 @@ _deleteTrEl : function(row) {
     if(lang.isNumber(rowIndex) && (rowIndex > -2) && (rowIndex < this._elTbody.rows.length)) {
         // Cannot use tbody.deleteRow due to IE6 instability
         //return this._elTbody.deleteRow(rowIndex);
-        return this._elTbody.removeChild(this.getTrEl(row));
+        return this._elTbody.removeChild(this._elTbody.rows[row]);
     }
     else {
         return null;
@@ -5860,58 +6249,60 @@ _onTbodyFocus : function(e, oSelf) {
  *
  * @method _onTableMouseover
  * @param e {HTMLEvent} The mouseover event.
+ * @param origTarget {HTMLElement} The mouseenter delegated element.
+ * @param container {HTMLElement} The mouseenter delegation container.
  * @param oSelf {YAHOO.wiget.DataTable} DataTable instance.
  * @private
  */
-_onTableMouseover : function(e, oSelf) {
-    var elTarget = Ev.getTarget(e);
-        var elTag = elTarget.nodeName.toLowerCase();
-        var bKeepBubbling = true;
-        while(elTarget && (elTag != "table")) {
-            switch(elTag) {
-                case "body":
-                     return;
-                case "a":
-                    break;
-                case "td":
-                    bKeepBubbling = oSelf.fireEvent("cellMouseoverEvent",{target:elTarget,event:e});
-                    break;
-                case "span":
-                    if(Dom.hasClass(elTarget, DT.CLASS_LABEL)) {
-                        bKeepBubbling = oSelf.fireEvent("theadLabelMouseoverEvent",{target:elTarget,event:e});
-                        // Backward compatibility
-                        bKeepBubbling = oSelf.fireEvent("headerLabelMouseoverEvent",{target:elTarget,event:e});
-                    }
-                    break;
-                case "th":
-                    bKeepBubbling = oSelf.fireEvent("theadCellMouseoverEvent",{target:elTarget,event:e});
+_onTableMouseover : function(e, origTarget, container, oSelf) {
+    var elTarget = origTarget;
+    var elTag = elTarget.nodeName && elTarget.nodeName.toLowerCase();
+    var bKeepBubbling = true;
+    while(elTarget && (elTag != "table")) {
+        switch(elTag) {
+            case "body":
+                 return;
+            case "a":
+                break;
+            case "td":
+                bKeepBubbling = oSelf.fireEvent("cellMouseoverEvent",{target:elTarget,event:e});
+                break;
+            case "span":
+                if(Dom.hasClass(elTarget, DT.CLASS_LABEL)) {
+                    bKeepBubbling = oSelf.fireEvent("theadLabelMouseoverEvent",{target:elTarget,event:e});
                     // Backward compatibility
-                    bKeepBubbling = oSelf.fireEvent("headerCellMouseoverEvent",{target:elTarget,event:e});
-                    break;
-                case "tr":
-                    if(elTarget.parentNode.nodeName.toLowerCase() == "thead") {
-                        bKeepBubbling = oSelf.fireEvent("theadRowMouseoverEvent",{target:elTarget,event:e});
-                        // Backward compatibility
-                        bKeepBubbling = oSelf.fireEvent("headerRowMouseoverEvent",{target:elTarget,event:e});
-                    }
-                    else {
-                        bKeepBubbling = oSelf.fireEvent("rowMouseoverEvent",{target:elTarget,event:e});
-                    }
-                    break;
-                default:
-                    break;
-            }
-            if(bKeepBubbling === false) {
-                return;
-            }
-            else {
-                elTarget = elTarget.parentNode;
-                if(elTarget) {
-                    elTag = elTarget.nodeName.toLowerCase();
+                    bKeepBubbling = oSelf.fireEvent("headerLabelMouseoverEvent",{target:elTarget,event:e});
                 }
+                break;
+            case "th":
+                bKeepBubbling = oSelf.fireEvent("theadCellMouseoverEvent",{target:elTarget,event:e});
+                // Backward compatibility
+                bKeepBubbling = oSelf.fireEvent("headerCellMouseoverEvent",{target:elTarget,event:e});
+                break;
+            case "tr":
+                if(elTarget.parentNode.nodeName.toLowerCase() == "thead") {
+                    bKeepBubbling = oSelf.fireEvent("theadRowMouseoverEvent",{target:elTarget,event:e});
+                    // Backward compatibility
+                    bKeepBubbling = oSelf.fireEvent("headerRowMouseoverEvent",{target:elTarget,event:e});
+                }
+                else {
+                    bKeepBubbling = oSelf.fireEvent("rowMouseoverEvent",{target:elTarget,event:e});
+                }
+                break;
+            default:
+                break;
+        }
+        if(bKeepBubbling === false) {
+            return;
+        }
+        else {
+            elTarget = elTarget.parentNode;
+            if(elTarget) {
+                elTag = elTarget.nodeName.toLowerCase();
             }
         }
-        oSelf.fireEvent("tableMouseoverEvent",{target:(elTarget || oSelf._elContainer),event:e});
+    }
+    oSelf.fireEvent("tableMouseoverEvent",{target:(elTarget || oSelf._elContainer),event:e});
 },
 
 /**
@@ -5919,12 +6310,14 @@ _onTableMouseover : function(e, oSelf) {
  *
  * @method _onTableMouseout
  * @param e {HTMLEvent} The mouseout event.
+ * @param origTarget {HTMLElement} The mouseleave delegated element.
+ * @param container {HTMLElement} The mouseleave delegation container.
  * @param oSelf {YAHOO.wiget.DataTable} DataTable instance.
  * @private
  */
-_onTableMouseout : function(e, oSelf) {
-    var elTarget = Ev.getTarget(e);
-    var elTag = elTarget.nodeName.toLowerCase();
+_onTableMouseout : function(e, origTarget, container, oSelf) {
+    var elTarget = origTarget;
+    var elTag = elTarget.nodeName && elTarget.nodeName.toLowerCase();
     var bKeepBubbling = true;
     while(elTarget && (elTag != "table")) {
         switch(elTag) {
@@ -5983,7 +6376,7 @@ _onTableMouseout : function(e, oSelf) {
  */
 _onTableMousedown : function(e, oSelf) {
     var elTarget = Ev.getTarget(e);
-    var elTag = elTarget.nodeName.toLowerCase();
+    var elTag = elTarget.nodeName && elTarget.nodeName.toLowerCase();
     var bKeepBubbling = true;
     while(elTarget && (elTag != "table")) {
         switch(elTag) {
@@ -6042,7 +6435,7 @@ _onTableMousedown : function(e, oSelf) {
  */
 _onTableMouseup : function(e, oSelf) {
     var elTarget = Ev.getTarget(e);
-    var elTag = elTarget.nodeName.toLowerCase();
+    var elTag = elTarget.nodeName && elTarget.nodeName.toLowerCase();
     var bKeepBubbling = true;
     while(elTarget && (elTag != "table")) {
         switch(elTag) {
@@ -6101,7 +6494,7 @@ _onTableMouseup : function(e, oSelf) {
  */
 _onTableDblclick : function(e, oSelf) {
     var elTarget = Ev.getTarget(e);
-    var elTag = elTarget.nodeName.toLowerCase();
+    var elTag = elTarget.nodeName && elTarget.nodeName.toLowerCase();
     var bKeepBubbling = true;
     while(elTarget && (elTag != "table")) {
         switch(elTag) {
@@ -6157,7 +6550,7 @@ _onTableDblclick : function(e, oSelf) {
  */
 _onTheadKeydown : function(e, oSelf) {
     var elTarget = Ev.getTarget(e);
-    var elTag = elTarget.nodeName.toLowerCase();
+    var elTag = elTarget.nodeName && elTarget.nodeName.toLowerCase();
     var bKeepBubbling = true;
     while(elTarget && (elTag != "table")) {
         switch(elTag) {
@@ -6224,7 +6617,7 @@ _onTbodyKeydown : function(e, oSelf) {
     }
 
     var elTarget = Ev.getTarget(e);
-    var elTag = elTarget.nodeName.toLowerCase();
+    var elTag = elTarget.nodeName && elTarget.nodeName.toLowerCase();
     var bKeepBubbling = true;
     while(elTarget && (elTag != "table")) {
         switch(elTag) {
@@ -6292,7 +6685,7 @@ _onTheadClick : function(e, oSelf) {
     }
 
     var elTarget = Ev.getTarget(e),
-        elTag = elTarget.nodeName.toLowerCase(),
+        elTag = elTarget.nodeName && elTarget.nodeName.toLowerCase(),
         bKeepBubbling = true;
     while(elTarget && (elTag != "table")) {
         switch(elTag) {
@@ -6307,14 +6700,27 @@ _onTheadClick : function(e, oSelf) {
                     bKeepBubbling = oSelf.fireEvent("theadRadioClickEvent",{target:elTarget,event:e});
                 }
                 else if((sType == "button") || (sType == "image") || (sType == "submit") || (sType == "reset")) {
-                    bKeepBubbling = oSelf.fireEvent("theadButtonClickEvent",{target:elTarget,event:e});
+                    if(!elTarget.disabled) {
+                        bKeepBubbling = oSelf.fireEvent("theadButtonClickEvent",{target:elTarget,event:e});
+                    }
+                    else {
+                        bKeepBubbling = false;
+                    }
+                }
+                else if (elTarget.disabled){
+                    bKeepBubbling = false;
                 }
                 break;
             case "a":
                 bKeepBubbling = oSelf.fireEvent("theadLinkClickEvent",{target:elTarget,event:e});
                 break;
             case "button":
-                bKeepBubbling = oSelf.fireEvent("theadButtonClickEvent",{target:elTarget,event:e});
+                if(!elTarget.disabled) {
+                    bKeepBubbling = oSelf.fireEvent("theadButtonClickEvent",{target:elTarget,event:e});
+                }
+                else {
+                    bKeepBubbling = false;
+                }
                 break;
             case "span":
                 if(Dom.hasClass(elTarget, DT.CLASS_LABEL)) {
@@ -6370,7 +6776,7 @@ _onTbodyClick : function(e, oSelf) {
 
     // Fire Custom Events
     var elTarget = Ev.getTarget(e),
-        elTag = elTarget.nodeName.toLowerCase(),
+        elTag = elTarget.nodeName && elTarget.nodeName.toLowerCase(),
         bKeepBubbling = true;
     while(elTarget && (elTag != "table")) {
         switch(elTag) {
@@ -6385,14 +6791,27 @@ _onTbodyClick : function(e, oSelf) {
                     bKeepBubbling = oSelf.fireEvent("radioClickEvent",{target:elTarget,event:e});
                 }
                 else if((sType == "button") || (sType == "image") || (sType == "submit") || (sType == "reset")) {
-                    bKeepBubbling = oSelf.fireEvent("buttonClickEvent",{target:elTarget,event:e});
+                    if(!elTarget.disabled) {
+                        bKeepBubbling = oSelf.fireEvent("buttonClickEvent",{target:elTarget,event:e});
+                    }
+                    else {
+                        bKeepBubbling = false;
+                    }
+                }
+                else if (elTarget.disabled){
+                    bKeepBubbling = false;
                 }
                 break;
             case "a":
                 bKeepBubbling = oSelf.fireEvent("linkClickEvent",{target:elTarget,event:e});
                 break;
             case "button":
-                bKeepBubbling = oSelf.fireEvent("buttonClickEvent",{target:elTarget,event:e});
+                if(!elTarget.disabled) {
+                    bKeepBubbling = oSelf.fireEvent("buttonClickEvent",{target:elTarget,event:e});
+                }
+                else {
+                    bKeepBubbling = false;
+                }
                 break;
             case "td":
                 bKeepBubbling = oSelf.fireEvent("cellClickEvent",{target:elTarget,event:e});
@@ -6679,9 +7098,10 @@ getMsgTdEl : function() {
 
 /**
  * Returns the corresponding TR reference for a given DOM element, ID string or
- * directly page row index. If the given identifier is a child of a TR element,
+ * page row index. If the given identifier is a child of a TR element,
  * then DOM tree is traversed until a parent TR element is returned, otherwise
- * null.
+ * null. Returns null if the row is not considered a primary row (i.e., row
+ * extensions).
  *
  * @method getTrEl
  * @param row {HTMLElement | String | Number | YAHOO.widget.Record} Which row to
@@ -6695,8 +7115,8 @@ getTrEl : function(row) {
     }
     // By page row index
     else if(lang.isNumber(row)) {
-        var allRows = this._elTbody.rows;
-        return ((row > -1) && (row < allRows.length)) ? allRows[row] : null;
+        var dataRows = Dom.getElementsByClassName(DT.CLASS_REC, "tr", this._elTbody);
+        return dataRows && dataRows[row] ? dataRows[row] : null;
     }
     // By ID string or element reference
     else {
@@ -6718,42 +7138,70 @@ getTrEl : function(row) {
 },
 
 /**
- * Returns DOM reference to the first TR element in the DataTable page, or null.
+ * Returns DOM reference to the first primary TR element in the DataTable page, or null.
  *
  * @method getFirstTrEl
  * @return {HTMLElement} Reference to TR element.
  */
 getFirstTrEl : function() {
-    return this._elTbody.rows[0] || null;
+    var allRows = this._elTbody.rows,
+        i=0;
+    while(allRows[i]) {
+        if(this.getRecord(allRows[i])) {
+            return allRows[i];
+        }
+        i++;
+    }
+    return null;
+
 },
 
 /**
- * Returns DOM reference to the last TR element in the DataTable page, or null.
+ * Returns DOM reference to the last primary TR element in the DataTable page, or null.
  *
  * @method getLastTrEl
  * @return {HTMLElement} Reference to last TR element.
  */
 getLastTrEl : function() {
-    var allRows = this._elTbody.rows;
-        if(allRows.length > 0) {
-            return allRows[allRows.length-1] || null;
+    var allRows = this._elTbody.rows,
+        i=allRows.length-1;
+    while(i>-1) {
+        if(this.getRecord(allRows[i])) {
+            return allRows[i];
         }
+        i--;
+    }
+    return null;
 },
 
 /**
- * Returns DOM reference to the next TR element from the given TR element, or null.
+ * Returns DOM reference to the next TR element from the given primary TR element, or null.
  *
  * @method getNextTrEl
  * @param row {HTMLElement | String | Number | YAHOO.widget.Record} Element
  * reference, ID string, page row index, or Record from which to get next TR element.
+ * @param forcePrimary {Boolean} (optional) If true, will only return TR elements
+ * that correspond to Records. Non-primary rows (such as row expansions)
+ * will be skipped.
  * @return {HTMLElement} Reference to next TR element.
  */
-getNextTrEl : function(row) {
+getNextTrEl : function(row, forcePrimary) {
     var nThisTrIndex = this.getTrIndex(row);
     if(nThisTrIndex !== null) {
         var allRows = this._elTbody.rows;
-        if(nThisTrIndex < allRows.length-1) {
-            return allRows[nThisTrIndex+1];
+        if(forcePrimary) {
+            while(nThisTrIndex < allRows.length-1) {
+                row = allRows[nThisTrIndex+1];
+                if(this.getRecord(row)) {
+                    return row;
+                }
+                nThisTrIndex++;
+            }
+        }
+        else {
+            if(nThisTrIndex < allRows.length-1) {
+                return allRows[nThisTrIndex+1];
+            }
         }
     }
 
@@ -6761,19 +7209,34 @@ getNextTrEl : function(row) {
 },
 
 /**
- * Returns DOM reference to the previous TR element from the given TR element, or null.
+ * Returns DOM reference to the previous TR element from the given primary TR element, or null.
  *
  * @method getPreviousTrEl
  * @param row {HTMLElement | String | Number | YAHOO.widget.Record} Element
  * reference, ID string, page row index, or Record from which to get previous TR element.
+ * @param forcePrimary {Boolean} (optional) If true, will only return TR elements
+ * from rothat correspond to Records. Non-primary rows (such as row expansions)
+ * will be skipped.
  * @return {HTMLElement} Reference to previous TR element.
  */
-getPreviousTrEl : function(row) {
+getPreviousTrEl : function(row, forcePrimary) {
     var nThisTrIndex = this.getTrIndex(row);
     if(nThisTrIndex !== null) {
         var allRows = this._elTbody.rows;
-        if(nThisTrIndex > 0) {
-            return allRows[nThisTrIndex-1];
+
+        if(forcePrimary) {
+            while(nThisTrIndex > 0) {
+                row = allRows[nThisTrIndex-1];
+                if(this.getRecord(row)) {
+                    return row;
+                }
+                nThisTrIndex--;
+            }
+        }
+        else {
+            if(nThisTrIndex > 0) {
+                return allRows[nThisTrIndex-1];
+            }
         }
     }
 
@@ -6848,7 +7311,7 @@ getTdEl : function(cell) {
 },
 
 /**
- * Returns DOM reference to the first TD element in the DataTable page (by default),
+ * Returns DOM reference to the first primary TD element in the DataTable page (by default),
  * the first TD element of the optionally given row, or null.
  *
  * @method getFirstTdEl
@@ -6856,7 +7319,7 @@ getTdEl : function(cell) {
  * @return {HTMLElement} Reference to TD element.
  */
 getFirstTdEl : function(row) {
-    var elRow = this.getTrEl(row) || this.getFirstTrEl();
+    var elRow = lang.isValue(row) ? this.getTrEl(row) : this.getFirstTrEl();
     if(elRow && (elRow.cells.length > 0)) {
         return elRow.cells[0];
     }
@@ -6864,14 +7327,15 @@ getFirstTdEl : function(row) {
 },
 
 /**
- * Returns DOM reference to the last TD element in the DataTable page (by default),
+ * Returns DOM reference to the last primary TD element in the DataTable page (by default),
  * the first TD element of the optionally given row, or null.
  *
  * @method getLastTdEl
+ * @param row {HTMLElement} (optional) row from which to get first TD
  * @return {HTMLElement} Reference to last TD element.
  */
 getLastTdEl : function(row) {
-    var elRow = this.getTrEl(row) || this.getLastTrEl();
+    var elRow = lang.isValue(row) ? this.getTrEl(row) : this.getLastTrEl();
     if(elRow && (elRow.cells.length > 0)) {
         return elRow.cells[elRow.cells.length-1];
     }
@@ -6936,14 +7400,17 @@ getPreviousTdEl : function(cell) {
  * @method getAboveTdEl
  * @param cell {HTMLElement | String | Object} DOM element reference or string ID, or
  * object literal of syntax {record:oRecord, column:oColumn} from which to get next TD element.
- * @return {HTMLElement} Reference to next TD element, or null.
+ * @param forcePrimary {Boolean} (optional) If true, will only return TD elements
+ * from rows that correspond to Records. Non-primary rows (such as row expansions)
+ * will be skipped.
+ * @return {HTMLElement} Reference to above TD element, or null.
  */
-getAboveTdEl : function(cell) {
+getAboveTdEl : function(cell, forcePrimary) {
     var elCell = this.getTdEl(cell);
     if(elCell) {
-        var elPreviousRow = this.getPreviousTrEl(elCell);
-        if(elPreviousRow) {
-            return elPreviousRow.cells[elCell.cellIndex];
+        var elPreviousRow = this.getPreviousTrEl(elCell, forcePrimary);
+        if(elPreviousRow ) {
+            return elPreviousRow.cells[elCell.cellIndex] ? elPreviousRow.cells[elCell.cellIndex] : null;
         }
     }
     return null;
@@ -6955,14 +7422,17 @@ getAboveTdEl : function(cell) {
  * @method getBelowTdEl
  * @param cell {HTMLElement | String | Object} DOM element reference or string ID, or
  * object literal of syntax {record:oRecord, column:oColumn} from which to get previous TD element.
- * @return {HTMLElement} Reference to previous TD element, or null.
+ * @param forcePrimary {Boolean} (optional) If true, will only return TD elements
+ * from rows that correspond to Records. Non-primary rows (such as row expansions)
+ * will be skipped.
+ * @return {HTMLElement} Reference to below TD element, or null.
  */
-getBelowTdEl : function(cell) {
+getBelowTdEl : function(cell, forcePrimary) {
     var elCell = this.getTdEl(cell);
     if(elCell) {
-        var elNextRow = this.getNextTrEl(elCell);
+        var elNextRow = this.getNextTrEl(elCell, forcePrimary);
         if(elNextRow) {
-            return elNextRow.cells[elCell.cellIndex];
+            return elNextRow.cells[elCell.cellIndex] ? elNextRow.cells[elCell.cellIndex] : null;
         }
     }
     return null;
@@ -7024,17 +7494,28 @@ getThEl : function(theadCell) {
 },
 
 /**
- * Returns the page row index of given row. Returns null if the row is not on the
- * current DataTable page.
+ * Returns the page row index of given primary row. Returns null if the row is not on the
+ * current DataTable page, or if row is not considered a primary row (i.e., row
+ * extensions).
  *
  * @method getTrIndex
  * @param row {HTMLElement | String | YAHOO.widget.Record | Number} DOM or ID
  * string reference to an element within the DataTable page, a Record instance,
  * or a Record's RecordSet index.
- * @return {Number} Page row index, or null if row does not exist or is not on current page.
+ * @return {Number} Page row index, or null if data row does not exist or is not on current page.
  */
 getTrIndex : function(row) {
-    var nRecordIndex;
+    var record = this.getRecord(row),
+        tr;
+    if(record) {
+        tr = this.getTrEl(record);
+        if(tr) {
+            return tr.sectionRowIndex;
+        }
+    }
+    return null;
+
+    /*var nRecordIndex;
 
     // By Record
     if(row instanceof YAHOO.widget.Record) {
@@ -7059,6 +7540,7 @@ getTrIndex : function(row) {
                 var rng = oPaginator.getPageRecords();
                 if (rng && nRecordIndex >= rng[0] && nRecordIndex <= rng[1]) {
                     // This Record is on current page
+                    //TODO: row exp
                     return nRecordIndex - rng[0];
                 }
                 // This Record is not on current page
@@ -7068,6 +7550,7 @@ getTrIndex : function(row) {
             }
             // Not paginated, just return the Record index
             else {
+                //TODO: row exp
                 return nRecordIndex;
             }
         }
@@ -7086,7 +7569,7 @@ getTrIndex : function(row) {
         }
     }
 
-    return null;
+    return null;*/
 },
 
 
@@ -7137,6 +7620,37 @@ getTrIndex : function(row) {
 // TABLE FUNCTIONS
 
 /**
+ * Loads new data. Convenience method that calls DataSource's sendRequest()
+ * method under the hood.
+ *
+ * @method load
+ * @param oConfig {object} Optional configuration parameters:
+ *
+ * <dl>
+ * <dt>request</dt><dd>Pass in a new request, or initialRequest is used.</dd>
+ * <dt>callback</dt><dd>Pass in DataSource sendRequest() callback object, or the following is used:
+ *    <dl>
+ *      <dt>success</dt><dd>datatable.onDataReturnInitializeTable</dd>
+ *      <dt>failure</dt><dd>datatable.onDataReturnInitializeTable</dd>
+ *      <dt>scope</dt><dd>datatable</dd>
+ *      <dt>argument</dt><dd>datatable.getState()</dd>
+ *    </dl>
+ * </dd>
+ * <dt>datasource</dt><dd>Pass in a new DataSource instance to override the current DataSource for this transaction.</dd>
+ * </dl>
+ */
+load : function(oConfig) {
+    oConfig = oConfig || {};
+
+    (oConfig.datasource || this._oDataSource).sendRequest(oConfig.request || this.get("initialRequest"), oConfig.callback || {
+        success: this.onDataReturnInitializeTable,
+        failure: this.onDataReturnInitializeTable,
+        scope: this,
+        argument: this.getState()
+    });
+},
+
+/**
  * Resets a RecordSet with the given data and populates the page view
  * with the new data. Any previous data, and selection and sort states are
  * cleared. New data should be added as a separate step. 
@@ -7178,6 +7692,29 @@ _runRenderChain : function() {
 },
 
 /**
+ * Returns array of Records for current view. For example, if paginated, it
+ * returns the subset of Records for current page.
+ *
+ * @method _getViewRecords
+ * @protected
+ * @return {Array} Array of Records to display in current view.
+ */
+_getViewRecords : function() {
+    // Paginator is enabled, show a subset of Records
+    var oPaginator = this.get('paginator');
+    if(oPaginator) {
+        return this._oRecordSet.getRecords(
+                        oPaginator.getStartIndex(),
+                        oPaginator.getRowsPerPage());
+    }
+    // Not paginated, show all records
+    else {
+        return this._oRecordSet.getRecords();
+    }
+
+},
+
+/**
  * Renders the view with existing Records from the RecordSet while
  * maintaining sort, pagination, and selection states. For performance, reuses
  * existing DOM elements when possible while deleting extraneous elements.
@@ -7191,19 +7728,9 @@ render : function() {
 
     this.fireEvent("beforeRenderEvent");
 
-    var i, j, k, len, allRecords;
+    var i, j, k, len,
+        allRecords = this._getViewRecords();
 
-    var oPaginator = this.get('paginator');
-    // Paginator is enabled, show a subset of Records and update Paginator UI
-    if(oPaginator) {
-        allRecords = this._oRecordSet.getRecords(
-                        oPaginator.getStartIndex(),
-                        oPaginator.getRowsPerPage());
-    }
-    // Not paginated, show all records
-    else {
-        allRecords = this._oRecordSet.getRecords();
-    }
 
     // From the top, update in-place existing rows, so as to reuse DOM elements
     var elTbody = this._elTbody,
@@ -7278,7 +7805,7 @@ render : function() {
                     if((this instanceof DT) && this._sId) {
                         var i = oArg.nCurrent,
                             loopN = oArg.nLoopLength,
-                            nIterEnd = (i - loopN < 0) ? -1 : i - loopN;
+                            nIterEnd = (i - loopN < 0) ? 0 : i - loopN;
     
                         elTbody.style.display = "none";
                         
@@ -7355,10 +7882,6 @@ destroy : function() {
 
     this._oChainRender.stop();
     
-    // Destroy static resizer proxy and column proxy
-    DT._destroyColumnDragTargetEl();
-    DT._destroyColumnResizerProxyEl();
-    
     // Destroy ColumnDD and ColumnResizers
     this._destroyColumnHelpers();
     
@@ -7408,7 +7931,7 @@ destroy : function() {
  * Displays message within secondary TBODY.
  *
  * @method showTableMessage
- * @param sHTML {String} (optional) Value for innerHTMlang.
+ * @param sHTML {HTML} (optional) Value for innerHTML.
  * @param sClassName {String} (optional) Classname.
  */
 showTableMessage : function(sHTML, sClassName) {
@@ -8600,7 +9123,7 @@ reorderColumn : function(oColumn, index) {
                     this._runRenderChain();
                 }
         
-                this.fireEvent("columnReorderEvent",{column:oNewColumn});
+                this.fireEvent("columnReorderEvent",{column:oNewColumn, oldIndex:nOrigTreeIndex});
                 return oNewColumn;
             }
         }
@@ -8889,7 +9412,7 @@ addRow : function(oData, index) {
             }
             // Not paginated
             else {
-                recIndex = this.getTrIndex(oRecord);
+                recIndex = this.getRecordIndex(oRecord);
                 if(lang.isNumber(recIndex)) {
                     // Add the TR element
                     this._oChainRender.add({
@@ -9043,14 +9566,13 @@ updateRow : function(row, oData) {
     if(lang.isNumber(index) && (index >= 0)) {
         var oRecordSet = this._oRecordSet,
             oldRecord = oRecordSet.getRecord(index);
-            
-        
+
         if(oldRecord) {
             var updatedRecord = this._oRecordSet.setRecord(oData, index),
                 elRow = this.getTrEl(oldRecord),
                 // Copy data from the Record for the event that gets fired later
                 oldData = oldRecord ? oldRecord.getData() : null;
-               
+
             if(updatedRecord) {
                 // Update selected rows as necessary
                 var tracker = this._aSelections || [],
@@ -9066,6 +9588,14 @@ updateRow : function(row, oData) {
                     }
                 }
 
+                // Update anchors as necessary
+                if(this._oAnchorRecord && this._oAnchorRecord.getId() === oldId) {
+                    this._oAnchorRecord = updatedRecord;
+                }
+                if(this._oAnchorCell && this._oAnchorCell.record.getId() === oldId) {
+                    this._oAnchorCell.record = updatedRecord;
+                }
+
                 // Update the TR only if row is on current page
                 this._oChainRender.add({
                     method: function() {
@@ -9075,7 +9605,7 @@ updateRow : function(row, oData) {
                             if (oPaginator) {
                                 var pageStartIndex = (oPaginator.getPageRecords())[0],
                                     pageLastIndex = (oPaginator.getPageRecords())[1];
-        
+
                                 // At least one of the new records affects the view
                                 if ((index >= pageStartIndex) || (index <= pageLastIndex)) {
                                     this.render();
@@ -9120,8 +9650,9 @@ updateRow : function(row, oData) {
 updateRows : function(startrow, aData) {
     if(lang.isArray(aData)) {
         var startIndex = startrow,
-            oRecordSet = this._oRecordSet;
-            
+            oRecordSet = this._oRecordSet,
+            lastRowIndex = oRecordSet.getLength();
+
         if (!lang.isNumber(startrow)) {
             startIndex = this.getRecordIndex(startrow);
         }
@@ -9131,21 +9662,34 @@ updateRows : function(startrow, aData) {
                 aOldRecords = oRecordSet.getRecords(startIndex, aData.length),
                 aNewRecords = oRecordSet.setRecords(aData, startIndex);
             if(aNewRecords) {
-                // Update selected rows as necessary
                 var tracker = this._aSelections || [],
-                    i=0, j, newId, oldId;
-                for(; i<tracker.length; i++) {
-                    for(j=0; j<aOldRecords.length; j++) {
-                        oldId = aOldRecords[j].getId();
-                        if((tracker[i] === oldId)) {
-                            tracker[i] = aNewRecords[j].getId();
+                    i=0, j, newRecord, newId, oldId,
+                    anchorRecord = this._oAnchorRecord ? this._oAnchorRecord.getId() : null,
+                    anchorCell = this._oAnchorCell ? this._oAnchorCell.record.getId() : null;
+                for(; i<aOldRecords.length; i++) {
+                    oldId = aOldRecords[i].getId();
+                    newRecord = aNewRecords[i];
+                    newId = newRecord.getId();
+
+                    // Update selected rows as necessary
+                    for(j=0; j<tracker.length; j++) {
+                        if((tracker[j] === oldId)) {
+                            tracker[j] = newId;
                         }
-                        else if(tracker[i].recordId === oldId) {
-                            tracker[i].recordId = aNewRecords[j].getId();
+                        else if(tracker[j].recordId === oldId) {
+                            tracker[j].recordId = newId;
                         }
                     }
-                }
-            
+
+                    // Update anchors as necessary
+                    if(anchorRecord && anchorRecord === oldId) {
+                        this._oAnchorRecord = newRecord;
+                    }
+                    if(anchorCell && anchorCell === oldId) {
+                        this._oAnchorCell.record = newRecord;
+                    }
+               }
+
                 // Paginated
                 var oPaginator = this.get('paginator');
                 if (oPaginator) {
@@ -9156,7 +9700,7 @@ updateRows : function(startrow, aData) {
                     if ((startIndex >= pageStartIndex) || (lastIndex <= pageLastIndex)) {
                         this.render();
                     }
-                    
+
                     this.fireEvent("rowsAddEvent", {newRecords:aNewRecords, oldRecords:aOldRecords});
                     return;
                 }
@@ -9165,7 +9709,6 @@ updateRows : function(startrow, aData) {
                     // Update the TR elements
                     var loopN = this.get("renderLoopSize"),
                         rowCount = aData.length, // how many needed
-                        lastRowIndex = this._elTbody.rows.length,
                         isLast = (lastIndex >= lastRowIndex),
                         isAdding = (lastIndex > lastRowIndex);
                                            
@@ -11957,6 +12500,24 @@ unhighlightCell : function(cell) {
 // INLINE EDITING
 
 /**
+ * Assigns CellEditor instance to existing Column.
+ * @method addCellEditor
+ * @param oColumn {YAHOO.widget.Column} Column instance.
+ * @param oEditor {YAHOO.wdiget.CellEditor} CellEditor instance.
+ */
+addCellEditor : function(oColumn, oEditor) {
+    oColumn.editor = oEditor;
+    oColumn.editor.subscribe("showEvent", this._onEditorShowEvent, this, true);
+    oColumn.editor.subscribe("keydownEvent", this._onEditorKeydownEvent, this, true);
+    oColumn.editor.subscribe("revertEvent", this._onEditorRevertEvent, this, true);
+    oColumn.editor.subscribe("saveEvent", this._onEditorSaveEvent, this, true);
+    oColumn.editor.subscribe("cancelEvent", this._onEditorCancelEvent, this, true);
+    oColumn.editor.subscribe("blurEvent", this._onEditorBlurEvent, this, true);
+    oColumn.editor.subscribe("blockEvent", this._onEditorBlockEvent, this, true);
+    oColumn.editor.subscribe("unblockEvent", this._onEditorUnblockEvent, this, true);
+},
+
+/**
  * Returns current CellEditor instance, or null.
  * @method getCellEditor
  * @return {YAHOO.widget.CellEditor} CellEditor instance.
@@ -11996,6 +12557,7 @@ showCellEditor : function(elCell, oRecord, oColumn) {
                 oCellEditor = oColumn.editor;
                 var ok = oCellEditor.attach(this, elCell);
                 if(ok) {
+                    oCellEditor.render();
                     oCellEditor.move();
                     ok = this.doBeforeShowCellEditor(oCellEditor);
                     if(ok) {
@@ -12495,7 +13057,7 @@ doBeforeLoadData : function(sRequest, oResponse, oPayload) {
 /////////////////////////////////////////////////////////////////////////////
 
 /**
- * Overridable custom event handler to sort Column.
+ * Custom event handler to sort Column.
  *
  * @method onEventSortColumn
  * @param oArgs.event {HTMLEvent} Event object.
@@ -12519,7 +13081,7 @@ onEventSortColumn : function(oArgs) {
 },
 
 /**
- * Overridable custom event handler to select Column.
+ * Custom event handler to select Column.
  *
  * @method onEventSelectColumn
  * @param oArgs.event {HTMLEvent} Event object.
@@ -12530,7 +13092,7 @@ onEventSelectColumn : function(oArgs) {
 },
 
 /**
- * Overridable custom event handler to highlight Column. Accounts for spurious
+ * Custom event handler to highlight Column. Accounts for spurious
  * caused-by-child events. 
  *
  * @method onEventHighlightColumn
@@ -12538,14 +13100,11 @@ onEventSelectColumn : function(oArgs) {
  * @param oArgs.target {HTMLElement} Target element.
  */
 onEventHighlightColumn : function(oArgs) {
-    //TODO: filter for all spurious events at a lower level
-    if(!Dom.isAncestor(oArgs.target,Ev.getRelatedTarget(oArgs.event))) {
-        this.highlightColumn(oArgs.target);
-    }
+    this.highlightColumn(oArgs.target);
 },
 
 /**
- * Overridable custom event handler to unhighlight Column. Accounts for spurious
+ * Custom event handler to unhighlight Column. Accounts for spurious
  * caused-by-child events. 
  *
  * @method onEventUnhighlightColumn
@@ -12553,14 +13112,11 @@ onEventHighlightColumn : function(oArgs) {
  * @param oArgs.target {HTMLElement} Target element.
  */
 onEventUnhighlightColumn : function(oArgs) {
-    //TODO: filter for all spurious events at a lower level
-    if(!Dom.isAncestor(oArgs.target,Ev.getRelatedTarget(oArgs.event))) {
-        this.unhighlightColumn(oArgs.target);
-    }
+    this.unhighlightColumn(oArgs.target);
 },
 
 /**
- * Overridable custom event handler to manage selection according to desktop paradigm.
+ * Custom event handler to manage selection according to desktop paradigm.
  *
  * @method onEventSelectRow
  * @param oArgs.event {HTMLEvent} Event object.
@@ -12577,7 +13133,7 @@ onEventSelectRow : function(oArgs) {
 },
 
 /**
- * Overridable custom event handler to select cell.
+ * Custom event handler to select cell.
  *
  * @method onEventSelectCell
  * @param oArgs.event {HTMLEvent} Event object.
@@ -12597,7 +13153,7 @@ onEventSelectCell : function(oArgs) {
 },
 
 /**
- * Overridable custom event handler to highlight row. Accounts for spurious
+ * Custom event handler to highlight row. Accounts for spurious
  * caused-by-child events. 
  *
  * @method onEventHighlightRow
@@ -12605,14 +13161,11 @@ onEventSelectCell : function(oArgs) {
  * @param oArgs.target {HTMLElement} Target element.
  */
 onEventHighlightRow : function(oArgs) {
-    //TODO: filter for all spurious events at a lower level
-    if(!Dom.isAncestor(oArgs.target,Ev.getRelatedTarget(oArgs.event))) {
-        this.highlightRow(oArgs.target);
-    }
+    this.highlightRow(oArgs.target);
 },
 
 /**
- * Overridable custom event handler to unhighlight row. Accounts for spurious
+ * Custom event handler to unhighlight row. Accounts for spurious
  * caused-by-child events. 
  *
  * @method onEventUnhighlightRow
@@ -12620,14 +13173,11 @@ onEventHighlightRow : function(oArgs) {
  * @param oArgs.target {HTMLElement} Target element.
  */
 onEventUnhighlightRow : function(oArgs) {
-    //TODO: filter for all spurious events at a lower level
-    if(!Dom.isAncestor(oArgs.target,Ev.getRelatedTarget(oArgs.event))) {
-        this.unhighlightRow(oArgs.target);
-    }
+    this.unhighlightRow(oArgs.target);
 },
 
 /**
- * Overridable custom event handler to highlight cell. Accounts for spurious
+ * Custom event handler to highlight cell. Accounts for spurious
  * caused-by-child events. 
  *
  * @method onEventHighlightCell
@@ -12635,14 +13185,11 @@ onEventUnhighlightRow : function(oArgs) {
  * @param oArgs.target {HTMLElement} Target element.
  */
 onEventHighlightCell : function(oArgs) {
-    //TODO: filter for all spurious events at a lower level
-    if(!Dom.isAncestor(oArgs.target,Ev.getRelatedTarget(oArgs.event))) {
-        this.highlightCell(oArgs.target);
-    }
+    this.highlightCell(oArgs.target);
 },
 
 /**
- * Overridable custom event handler to unhighlight cell. Accounts for spurious
+ * Custom event handler to unhighlight cell. Accounts for spurious
  * caused-by-child events. 
  *
  * @method onEventUnhighlightCell
@@ -12650,14 +13197,11 @@ onEventHighlightCell : function(oArgs) {
  * @param oArgs.target {HTMLElement} Target element.
  */
 onEventUnhighlightCell : function(oArgs) {
-    //TODO: filter for all spurious events at a lower level
-    if(!Dom.isAncestor(oArgs.target,Ev.getRelatedTarget(oArgs.event))) {
-        this.unhighlightCell(oArgs.target);
-    }
+    this.unhighlightCell(oArgs.target);
 },
 
 /**
- * Overridable custom event handler to format cell.
+ * Custom event handler to format cell.
  *
  * @method onEventFormatCell
  * @param oArgs.event {HTMLEvent} Event object.
@@ -12676,7 +13220,7 @@ onEventFormatCell : function(oArgs) {
 },
 
 /**
- * Overridable custom event handler to edit cell.
+ * Custom event handler to edit cell.
  *
  * @method onEventShowCellEditor
  * @param oArgs.event {HTMLEvent} Event object.
@@ -12689,7 +13233,7 @@ onEventShowCellEditor : function(oArgs) {
 },
 
 /**
- * Overridable custom event handler to save active CellEditor input.
+ * Custom event handler to save active CellEditor input.
  *
  * @method onEventSaveCellEditor
  */
@@ -12706,7 +13250,7 @@ onEventSaveCellEditor : function(oArgs) {
 },
 
 /**
- * Overridable custom event handler to cancel active CellEditor.
+ * Custom event handler to cancel active CellEditor.
  *
  * @method onEventCancelCellEditor
  */
@@ -13195,7 +13739,7 @@ _handleDataReturnPayload : function (oRequest, oResponse, oPayload) {
      * Fired when a message is shown in the DataTable's message element.
      *
      * @event tableMsgShowEvent
-     * @param oArgs.html {String} The HTML displayed.
+     * @param oArgs.html {HTML} The HTML displayed.
      * @param oArgs.className {String} The className assigned.
      *
      */
@@ -13392,7 +13936,7 @@ _handleDataReturnPayload : function (oRequest, oResponse, oPayload) {
      *
      * @event columnReorderEvent
      * @param oArgs.column {YAHOO.widget.Column} The Column instance.
-     * @param oArgs.oldIndex {Number} The previous index position.
+     * @param oArgs.oldIndex {Number} The previous tree index position.
      */
 
     /**
@@ -14441,7 +14985,11 @@ _initTableEl : function() {
     
         // Create TABLE
         this._elHdTable = this._elHdContainer.appendChild(document.createElement("table"));   
-    } 
+
+        // Set up mouseover/mouseout events via mouseenter/mouseleave delegation
+        Ev.delegate(this._elHdTable, "mouseenter", this._onTableMouseover, "thead ."+DT.CLASS_LABEL, this);
+        Ev.delegate(this._elHdTable, "mouseleave", this._onTableMouseout, "thead ."+DT.CLASS_LABEL, this);
+    }
     // Body TABLE
     SDT.superclass._initTableEl.call(this, this._elBdContainer);
 },
@@ -15381,7 +15929,8 @@ var lang   = YAHOO.lang,
  * @param oConfigs {Object} (Optional) Object literal of configs.
  */
 widget.BaseCellEditor = function(sType, oConfigs) {
-    this._sId = this._sId || "yui-ceditor" + YAHOO.widget.BaseCellEditor._nCount++;
+    this._sId = this._sId || Dom.generateId(null, "yui-ceditor"); // "yui-ceditor" + YAHOO.widget.BaseCellEditor._nCount++;
+    YAHOO.widget.BaseCellEditor._nCount++;
     this._sType = sType;
     
     // Validate inputs
@@ -15390,8 +15939,8 @@ widget.BaseCellEditor = function(sType, oConfigs) {
     // Create Custom Events
     this._initEvents();
              
-    // Draw UI
-    this.render();
+    // UI needs to be drawn
+    this._needsRender = true;
 };
 
 var BCE = widget.BaseCellEditor;
@@ -15708,7 +16257,7 @@ isActive : false,
  * Text to display on Save button.
  *
  * @property LABEL_SAVE
- * @type String
+ * @type HTML
  * @default "Save"
  */
 LABEL_SAVE : "Save",
@@ -15717,7 +16266,7 @@ LABEL_SAVE : "Save",
  * Text to display on Cancel button.
  *
  * @property LABEL_CANCEL
- * @type String
+ * @type HTML
  * @default "Cancel"
  */
 LABEL_CANCEL : "Cancel",
@@ -15853,8 +16402,10 @@ destroy : function() {
     }
     
     var elContainer = this.getContainerEl();
-    Ev.purgeElement(elContainer, true);
-    elContainer.parentNode.removeChild(elContainer);
+    if (elContainer) {
+        Ev.purgeElement(elContainer, true);
+        elContainer.parentNode.removeChild(elContainer);
+    }
 },
 
 /**
@@ -15863,6 +16414,10 @@ destroy : function() {
  * @method render
  */
 render : function() {
+    if (!this._needsRender) {
+        return;
+    }
+
     this._initContainerEl();
     this._initShimEl();
 
@@ -15890,6 +16445,7 @@ render : function() {
     }
     
     this.doAfterRender();
+    this._needsRender = false;
 },
 
 /**
@@ -16248,8 +16804,10 @@ lang.augmentProto(BCE, util.EventProvider);
  * @param oConfigs {Object} (Optional) Object literal of configs.
  */
 widget.CheckboxCellEditor = function(oConfigs) {
-    this._sId = "yui-checkboxceditor" + YAHOO.widget.BaseCellEditor._nCount++;
-    widget.CheckboxCellEditor.superclass.constructor.call(this, "checkbox", oConfigs); 
+    oConfigs = oConfigs || {};
+    this._sId = this._sId || Dom.generateId(null, "yui-checkboxceditor"); // "yui-checkboxceditor" + YAHOO.widget.BaseCellEditor._nCount++;
+    YAHOO.widget.BaseCellEditor._nCount++;
+    widget.CheckboxCellEditor.superclass.constructor.call(this, oConfigs.type || "checkbox", oConfigs);
 };
 
 // CheckboxCellEditor extends BaseCellEditor
@@ -16263,10 +16821,11 @@ lang.extend(widget.CheckboxCellEditor, BCE, {
 /**
  * Array of checkbox values. Can either be a simple array (e.g., ["red","green","blue"])
  * or a an array of objects (e.g., [{label:"red", value:"#FF0000"},
- * {label:"green", value:"#00FF00"}, {label:"blue", value:"#0000FF"}]). 
+ * {label:"green", value:"#00FF00"}, {label:"blue", value:"#0000FF"}]). String
+ * values are treated as markup and inserted into the DOM as innerHTML.
  *
  * @property checkboxOptions
- * @type String[] | Object[]
+ * @type HTML[] | Object[]
  */
 checkboxOptions : null,
 
@@ -16362,7 +16921,7 @@ resetForm : function() {
     for(var i=0, j=this.checkboxes.length; i<j; i++) {
         this.checkboxes[i].checked = false;
         for(var k=0, len=originalValues.length; k<len; k++) {
-            if(this.checkboxes[i].value === originalValues[k]) {
+            if(this.checkboxes[i].value == originalValues[k]) {
                 this.checkboxes[i].checked = true;
             }
         }
@@ -16420,8 +16979,10 @@ lang.augmentObject(widget.CheckboxCellEditor, BCE);
  * @param oConfigs {Object} (Optional) Object literal of configs.
  */
 widget.DateCellEditor = function(oConfigs) {
-    this._sId = "yui-dateceditor" + YAHOO.widget.BaseCellEditor._nCount++;
-    widget.DateCellEditor.superclass.constructor.call(this, "date", oConfigs); 
+    oConfigs = oConfigs || {};
+    this._sId = this._sId || Dom.generateId(null, "yui-dateceditor"); // "yui-dateceditor" + YAHOO.widget.BaseCellEditor._nCount++;
+    YAHOO.widget.BaseCellEditor._nCount++;
+    widget.DateCellEditor.superclass.constructor.call(this, oConfigs.type || "date", oConfigs);
 };
 
 // CheckboxCellEditor extends BaseCellEditor
@@ -16518,9 +17079,9 @@ handleDisabledBtns : function() {
  * @method resetForm
  */
 resetForm : function() {
-    var value = this.value;
-    var selectedValue = (value.getMonth()+1)+"/"+value.getDate()+"/"+value.getFullYear();
-    this.calendar.cfg.setProperty("selected",selectedValue,false);
+    var value = this.value || (new Date());
+    this.calendar.select(value);
+    this.calendar.cfg.setProperty("pagedate",value,false);
 	this.calendar.render();
 	// Bug 2528576
 	this.calendar.show();
@@ -16572,8 +17133,10 @@ lang.augmentObject(widget.DateCellEditor, BCE);
  * @param oConfigs {Object} (Optional) Object literal of configs.
  */
 widget.DropdownCellEditor = function(oConfigs) {
-    this._sId = "yui-dropdownceditor" + YAHOO.widget.BaseCellEditor._nCount++;
-    widget.DropdownCellEditor.superclass.constructor.call(this, "dropdown", oConfigs);
+    oConfigs = oConfigs || {};
+    this._sId = this._sId || Dom.generateId(null, "yui-dropdownceditor"); // "yui-dropdownceditor" + YAHOO.widget.BaseCellEditor._nCount++;
+    YAHOO.widget.BaseCellEditor._nCount++;
+    widget.DropdownCellEditor.superclass.constructor.call(this, oConfigs.type || "dropdown", oConfigs);
 };
 
 // DropdownCellEditor extends BaseCellEditor
@@ -16588,10 +17151,11 @@ lang.extend(widget.DropdownCellEditor, BCE, {
  * Array of dropdown values. Can either be a simple array (e.g.,
  * ["Alabama","Alaska","Arizona","Arkansas"]) or a an array of objects (e.g., 
  * [{label:"Alabama", value:"AL"}, {label:"Alaska", value:"AK"},
- * {label:"Arizona", value:"AZ"}, {label:"Arkansas", value:"AR"}]). 
+ * {label:"Arizona", value:"AZ"}, {label:"Arkansas", value:"AR"}]). String
+ * values are treated as markup and inserted into the DOM as innerHTML.
  *
  * @property dropdownOptions
- * @type String[] | Object[]
+ * @type HTML[] | Object[]
  */
 dropdownOptions : null,
 
@@ -16710,7 +17274,7 @@ resetForm : function() {
     // Only need to look for a single selection
     else {
         for(; i<j; i++) {
-            if(this.value === allOptions[i].value) {
+            if(this.value == allOptions[i].value) {
                 allOptions[i].selected = true;
             }
         }
@@ -16776,8 +17340,10 @@ lang.augmentObject(widget.DropdownCellEditor, BCE);
  * @param oConfigs {Object} (Optional) Object literal of configs.
  */
 widget.RadioCellEditor = function(oConfigs) {
-    this._sId = "yui-radioceditor" + YAHOO.widget.BaseCellEditor._nCount++;
-    widget.RadioCellEditor.superclass.constructor.call(this, "radio", oConfigs); 
+    oConfigs = oConfigs || {};
+    this._sId = this._sId || Dom.generateId(null, "yui-radioceditor"); // "yui-radioceditor" + YAHOO.widget.BaseCellEditor._nCount++;
+    YAHOO.widget.BaseCellEditor._nCount++;
+    widget.RadioCellEditor.superclass.constructor.call(this, oConfigs.type || "radio", oConfigs);
 };
 
 // RadioCellEditor extends BaseCellEditor
@@ -16799,10 +17365,11 @@ radios : null,
 /**
  * Array of radio values. Can either be a simple array (e.g., ["yes","no","maybe"])
  * or a an array of objects (e.g., [{label:"yes", value:1}, {label:"no", value:-1},
- * {label:"maybe", value:0}]). 
+ * {label:"maybe", value:0}]). String values are treated as markup and inserted
+ * into the DOM as innerHTML.
  *
  * @property radioOptions
- * @type String[] | Object[]
+ * @type HTML[] | Object[]
  */
 radioOptions : null,
 
@@ -16879,7 +17446,7 @@ handleDisabledBtns : function() {
 resetForm : function() {
     for(var i=0, j=this.radios.length; i<j; i++) {
         var elRadio = this.radios[i];
-        if(this.value === elRadio.value) {
+        if(this.value == elRadio.value) {
             elRadio.checked = true;
             return;
         }
@@ -16938,8 +17505,10 @@ lang.augmentObject(widget.RadioCellEditor, BCE);
  * @param oConfigs {Object} (Optional) Object literal of configs.
  */
 widget.TextareaCellEditor = function(oConfigs) {
-    this._sId = "yui-textareaceditor" + YAHOO.widget.BaseCellEditor._nCount++;
-    widget.TextareaCellEditor.superclass.constructor.call(this, "textarea", oConfigs); 
+    oConfigs = oConfigs || {};
+    this._sId = this._sId || Dom.generateId(null, "yui-textareaceditor");// "yui-textareaceditor" + ;
+    YAHOO.widget.BaseCellEditor._nCount++;
+    widget.TextareaCellEditor.superclass.constructor.call(this, oConfigs.type || "textarea", oConfigs);
 };
 
 // TextareaCellEditor extends BaseCellEditor
@@ -17060,8 +17629,10 @@ lang.augmentObject(widget.TextareaCellEditor, BCE);
  * @param oConfigs {Object} (Optional) Object literal of configs.
  */
 widget.TextboxCellEditor = function(oConfigs) {
-    this._sId = "yui-textboxceditor" + YAHOO.widget.BaseCellEditor._nCount++;
-    widget.TextboxCellEditor.superclass.constructor.call(this, "textbox", oConfigs); 
+    oConfigs = oConfigs || {};
+    this._sId = this._sId || Dom.generateId(null, "yui-textboxceditor");// "yui-textboxceditor" + YAHOO.widget.BaseCellEditor._nCount++;
+    YAHOO.widget.BaseCellEditor._nCount++;
+    widget.TextboxCellEditor.superclass.constructor.call(this, oConfigs.type || "textbox", oConfigs);
 };
 
 // TextboxCellEditor extends BaseCellEditor

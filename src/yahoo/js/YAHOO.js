@@ -8,10 +8,10 @@
  */
 
 /**
- * YAHOO_config is not included as part of the library.  Instead it is an 
- * object that can be defined by the implementer immediately before 
+ * YAHOO_config is not included as part of the library.  Instead it is an
+ * object that can be defined by the implementer immediately before
  * including the YUI library.  The properties included in this object
- * will be used to configure global properties needed as soon as the 
+ * will be used to configure global properties needed as soon as the
  * library begins to load.
  * @class YAHOO_config
  * @static
@@ -30,7 +30,7 @@
 
 /**
  * Set to true if the library will be dynamically loaded after window.onload.
- * Defaults to false 
+ * Defaults to false
  * @property injecting
  * @type boolean
  * @static
@@ -84,16 +84,16 @@ if (typeof YAHOO == "undefined" || !YAHOO) {
  *
  * For implementation code that uses YUI, do not create your components
  * in the namespaces defined by YUI (
- * <code>YAHOO.util</code>, 
- * <code>YAHOO.widget</code>, 
- * <code>YAHOO.lang</code>, 
- * <code>YAHOO.tool</code>, 
- * <code>YAHOO.example</code>, 
+ * <code>YAHOO.util</code>,
+ * <code>YAHOO.widget</code>,
+ * <code>YAHOO.lang</code>,
+ * <code>YAHOO.tool</code>,
+ * <code>YAHOO.example</code>,
  * <code>YAHOO.env</code>) -- create your own namespace (e.g., 'companyname').
  *
  * @method namespace
  * @static
- * @param  {String*} arguments 1-n namespaces to create 
+ * @param  {String*} arguments 1-n namespaces to create
  * @return {Object}  A reference to the last namespace object created
  */
 YAHOO.namespace = function() {
@@ -115,14 +115,15 @@ YAHOO.namespace = function() {
 /**
  * Uses YAHOO.widget.Logger to output a log message, if the widget is
  * available.
+ * Note: LogReader adds the message, category, and source to the DOM as HTML.
  *
  * @method log
  * @static
- * @param  {String}  msg  The message to log.
- * @param  {String}  cat  The log category for the message.  Default
+ * @param  {HTML}  msg  The message to log.
+ * @param  {HTML}  cat  The log category for the message.  Default
  *                        categories are "info", "warn", "error", time".
  *                        Custom categories can be used as well. (opt)
- * @param  {String}  src  The source of the the message (opt)
+ * @param  {HTML}  src  The source of the the message (opt)
  * @return {Boolean}      True if the log operation was successful.
  */
 YAHOO.log = function(msg, cat, src) {
@@ -152,9 +153,9 @@ YAHOO.register = function(name, mainClass, data) {
     var mods = YAHOO.env.modules, m, v, b, ls, i;
 
     if (!mods[name]) {
-        mods[name] = { 
-            versions:[], 
-            builds:[] 
+        mods[name] = {
+            versions:[],
+            builds:[]
         };
     }
 

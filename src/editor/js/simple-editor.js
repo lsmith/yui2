@@ -686,7 +686,7 @@ var Dom = YAHOO.util.Dom,
             }
 
             //Internet Explorer
-            if (this.browser.ie || this.browser.opera) {
+            if (this.browser.ie) {
                 if (range.text) {
                     hasSel = true;
                 }
@@ -715,7 +715,7 @@ var Dom = YAHOO.util.Dom,
         _getSelection: function() {
             var _sel = null;
             if (this._getDoc() && this._getWindow()) {
-                if (this._getDoc().selection) {
+                if (this._getDoc().selection &&! this.browser.opera) {
                     _sel = this._getDoc().selection;
                 } else {
                     _sel = this._getWindow().getSelection();
@@ -807,7 +807,7 @@ var Dom = YAHOO.util.Dom,
                 return _range;
             }
 
-            if (this.browser.ie || this.browser.opera) {
+            if (this.browser.ie) {
                 try {
                     return sel.createRange();
                 } catch (e2) {
@@ -4657,9 +4657,11 @@ var Dom = YAHOO.util.Dom,
 
             //Convert b and i tags to strong and em tags
             if ((markup == 'semantic') || (markup == 'xhtml')) {
-                html = html.replace(/<i(\s+[^>]*)?>/gi, '<em$1>');
+                //html = html.replace(/<i(\s+[^>]*)?>/gi, "<em$1>");
+                html = html.replace(/<i([^>]*)>/gi, "<em$1>");
                 html = html.replace(/<\/i>/gi, '</em>');
-                html = html.replace(/<b(\s+[^>]*)?>/gi, '<strong$1>');
+                //html = html.replace(/<b(\s+[^>]*)?>/gi, "<strong$1>");
+                html = html.replace(/<b([^>]*)>/gi, "<strong$1>");
                 html = html.replace(/<\/b>/gi, '</strong>');
             }
 

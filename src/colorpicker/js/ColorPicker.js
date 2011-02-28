@@ -43,7 +43,7 @@
             el = this._createHostElement(attr);
         }
 
-    	ColorPicker.superclass.constructor.call(this, el, attr); 
+        ColorPicker.superclass.constructor.call(this, el, attr); 
 
         this.initPicker();
     }
@@ -255,6 +255,7 @@
          * Constants for any script-generated messages.  The values here
          * are the default messages.  They can be updated by providing
          * the complete list to the constructor for the "txt" attribute.
+         * Note: the strings are added to the DOM as HTML.
          * @property TXT
          * @final
          */
@@ -1149,7 +1150,7 @@
         },
 
         /**
-         * Wrapper for _updateRGB, but allows setting 
+         * Wrapper for _updateRGB, but allows non-animated update
          *
          * @method syncUI
          * @param skipAnim {Boolean} Omit Slider animation for this action

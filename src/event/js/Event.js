@@ -22,20 +22,232 @@ if (!YAHOO.util.Event) {
  * @class Event
  * @static
  */
-    (function () {
-            // shortcuts
-        var isString = YAHOO.lang.isString,
-            doc = document,
-            win = window,
+    YAHOO.util.Event = function() {
+
+        /**
+         * True after the onload event has fired
+         * @property loadComplete
+         * @type boolean
+         * @static
+         * @private
+         */
+        var loadComplete =  false,
+
+        /**
+         * Cache of wrapped listeners
+         * @property listeners
+         * @type array
+         * @static
+         * @private
+         */
+        listeners = [],
+
+
+        /**
+         * User-defined unload function that will be fired before all events
+         * are detached
+         * @property unloadListeners
+         * @type array
+         * @static
+         * @private
+         */
+        unloadListeners = [],
+
+        /**
+         * The number of times to poll after window.onload.  This number is
+         * increased if additional late-bound handlers are requested after
+         * the page load.
+         * @property retryCount
+         * @static
+         * @private
+         */
+        retryCount = 0,
+
+        /**
+         * onAvailable listeners
+         * @property onAvailStack
+         * @static
+         * @private
+         */
+        onAvailStack = [],
+
+        /**
+         * Counter for auto id generation
+         * @property counter
+         * @static
+         * @private
+         */
+        counter = 0,
+
+        /**
+         * Normalized keycodes for webkit/safari
+         * @property webkitKeymap
+         * @type {int: int}
+         * @private
+         * @static
+         * @final
+         */
+         webkitKeymap = {
+            63232: 38, // up
+            63233: 40, // down
+            63234: 37, // left
+            63235: 39, // right
+            63276: 33, // page up
+            63277: 34, // page down
+            25: 9      // SHIFT-TAB (Safari provides a different key code in
+                       // this case, even though the shiftKey modifier is set)
+        },
+
+        isIE = YAHOO.env.ua.ie,
+
+        // String constants used by the addFocusListener and removeFocusListener methods
+
+        FOCUSIN = "focusin",
+        FOCUSOUT = "focusout";
+
+        return {
 
             /**
-             * True after the onload event has fired
-             * @property loadComplete
-             * @type boolean
+             * The number of times we should look for elements that are not
+             * in the DOM at the time the event is requested after the document
+             * has been loaded.  The default is 500@amp;40 ms, so it will poll
+             * for 20 seconds or until all outstanding handlers are bound
+             * (whichever comes first).
+             * @property POLL_RETRYS
+             * @type int
              * @static
+             * @final
+             */
+            POLL_RETRYS: 500,
+
+            /**
+             * The poll interval in milliseconds
+             * @property POLL_INTERVAL
+             * @type int
+             * @static
+             * @final
+             */
+            POLL_INTERVAL: 40,
+
+            /**
+             * Element to bind, int constant
+             * @property EL
+             * @type int
+             * @static
+             * @final
+             */
+            EL: 0,
+
+            /**
+             * Type of event, int constant
+             * @property TYPE
+             * @type int
+             * @static
+             * @final
+             */
+            TYPE: 1,
+
+            /**
+             * Function to execute, int constant
+             * @property FN
+             * @type int
+             * @static
+             * @final
+             */
+            FN: 2,
+
+            /**
+             * Function wrapped for context correction and cleanup, int constant
+             * @property WFN
+             * @type int
+             * @static
+             * @final
+             */
+            WFN: 3,
+
+            /**
+             * Object passed in by the user that will be returned as a
+             * parameter to the callback, int constant.  Specific to
+             * unload listeners
+             * @property OBJ
+             * @type int
+             * @static
+             * @final
+             */
+            UNLOAD_OBJ: 3,
+
+            /**
+             * Adjusted context, either the element we are registering the event
+             * on or the custom object passed in by the listener, int constant
+             * @property ADJ_SCOPE
+             * @type int
+             * @static
+             * @final
+             */
+            ADJ_SCOPE: 4,
+
+            /**
+             * The original obj passed into addListener
+             * @property OBJ
+             * @type int
+             * @static
+             * @final
+             */
+            OBJ: 5,
+
+            /**
+             * The original context parameter passed into addListener
+             * @property OVERRIDE
+             * @type int
+             * @static
+             * @final
+             */
+            OVERRIDE: 6,
+
+            /**
+             * The original capture parameter passed into addListener
+             * @property CAPTURE
+             * @type int
+             * @static
+             * @final
+             */
+            CAPTURE: 7,
+
+            /**
+             * addListener/removeListener can throw errors in unexpected scenarios.
+             * These errors are suppressed, the method returns false, and this property
+             * is set
+             * @property lastError
+             * @static
+             * @type Error
+             */
+            lastError: null,
+
+            /**
+             * Safari detection
+             * @property isSafari
+             * @private
+             * @static
+             * @deprecated use YAHOO.env.ua.webkit
+             */
+            isSafari: YAHOO.env.ua.webkit,
+
+            /**
+             * webkit version
+             * @property webkit
+             * @type string
              * @private
              */
-            loadComplete =  false,
+            webkit: YAHOO.env.ua.webkit,
+
+            /**
+             * IE detection
+             * @property isIE
+             * @private
+             * @static
+             * @deprecated use YAHOO.env.ua.ie
+             */
+            isIE: isIE,
 
             /**
              * Cache of wrapped listeners
@@ -64,7 +276,11 @@ if (!YAHOO.util.Event) {
              * @static
              * @private
              */
-            retryCount = 0,
+            _specialTypes: {
+                focusin: (isIE ? "focusin" : "focus"),
+                focusout: (isIE ? "focusout" : "blur")
+            },
+
 
             /**
              * onAvailable listeners
@@ -72,7 +288,55 @@ if (!YAHOO.util.Event) {
              * @static
              * @private
              */
-            onAvailStack = [],
+            startInterval: function() {
+                if (!this._interval) {
+                    // var self = this;
+                    // var callback = function() { self._tryPreloadAttach(); };
+                    // this._interval = setInterval(callback, this.POLL_INTERVAL);
+                    this._interval = YAHOO.lang.later(this.POLL_INTERVAL, this, this._tryPreloadAttach, null, true);
+                }
+            },
+
+            /**
+             * Executes the supplied callback when the item with the supplied
+             * id is found.  This is meant to be used to execute behavior as
+             * soon as possible as the page loads.  If you use this after the
+             * initial page load it will poll for a fixed time for the element.
+             * The number of times it will poll and the frequency are
+             * configurable.  By default it will poll for 10 seconds.
+             *
+             * <p>The callback is executed with a single parameter:
+             * the custom object parameter, if provided.</p>
+             *
+             * @method onAvailable
+             *
+             * @param {string||string[]}   id the id of the element, or an array
+             * of ids to look for.
+             * @param {function} fn what to execute when the element is found.
+             * @param {object}   obj an optional object to be passed back as
+             *                   a parameter to fn.
+             * @param {boolean|object}  overrideContext If set to true, fn will execute
+             *                   in the context of obj, if set to an object it
+             *                   will execute in the context of that object
+             * @param checkContent {boolean} check child node readiness (onContentReady)
+             * @static
+             */
+            onAvailable: function(id, fn, obj, overrideContext, checkContent) {
+
+                var a = (YAHOO.lang.isString(id)) ? [id] : id;
+
+                for (var i=0; i<a.length; i=i+1) {
+                    onAvailStack.push({id:         a[i],
+                                       fn:         fn,
+                                       obj:        obj,
+                                       overrideContext:   overrideContext,
+                                       checkReady: checkContent });
+                }
+
+                retryCount = this.POLL_RETRYS;
+
+                this.startInterval();
+            },
 
             /**
              * Counter for auto id generation
@@ -83,10 +347,35 @@ if (!YAHOO.util.Event) {
             counter = 0,
             
             /**
-             * Normalized keycodes for webkit/safari
-             * @property webkitKeymap
-             * @type {int: int}
-             * @private
+             * Executes the supplied callback when the DOM is first usable.  This
+             * will execute immediately if called after the DOMReady event has
+             * fired.   @todo the DOMContentReady event does not fire when the
+             * script is dynamically injected into the page.  This means the
+             * DOMReady custom event will never fire in FireFox or Opera when the
+             * library is injected.  It _will_ fire in Safari, and the IE
+             * implementation would allow for us to fire it if the defered script
+             * is not available.  We want this to behave the same in all browsers.
+             * Is there a way to identify when the script has been injected
+             * instead of included inline?  Is there a way to know whether the
+             * window onload event has fired without having had a listener attached
+             * to it when it did so?
+             *
+             * <p>The callback is a CustomEvent, so the signature is:</p>
+             * <p>type &lt;string&gt;, args &lt;array&gt;, customobject &lt;object&gt;</p>
+             * <p>For DOMReady events, there are no fire argments, so the
+             * signature is:</p>
+             * <p>"DOMReady", [], obj</p>
+             *
+             *
+             * @method onDOMReady
+             *
+             * @param {function} fn what to execute when the element is found.
+             * @param {object}   obj an optional object to be passed back as
+             *                   a parameter to fn.
+             * @param {boolean|object}  overrideContext If set to true, fn will execute
+             *                   in the context of obj, if set to an object it
+             *                   will execute in the context of that object
+             *
              * @static
              * @final
              */
@@ -103,263 +392,86 @@ if (!YAHOO.util.Event) {
 
             isIE = YAHOO.env.ua.ie,
 
-            // String constants used by the addFocusListener and removeFocusListener methods
-            
-            FOCUSIN = "focusin",
-            FOCUSOUT = "focusout",
+            /**
+             * Appends an event handler
+             *
+             * @method _addListener
+             *
+             * @param {String|HTMLElement|Array|NodeList} el An id, an element
+             *  reference, or a collection of ids and/or elements to assign the
+             *  listener to.
+             * @param {String}   sType     The type of event to append
+             * @param {Function} fn        The method the event invokes
+             * @param {Object}   obj    An arbitrary object that will be
+             *                             passed as a parameter to the handler
+             * @param {Boolean|object}  overrideContext  If true, the obj passed in becomes
+             *                             the execution context of the listener. If an
+             *                             object, this object becomes the execution
+             *                             context.
+             * @param {boolen}      capture capture or bubble phase
+             * @return {Boolean} True if the action was successful or defered,
+             *                        false if one or more of the elements
+             *                        could not have the listener attached,
+             *                        or if the operation throws an exception.
+             * @private
+             * @static
+             */
+            _addListener: function(el, sType, fn, obj, overrideContext, bCapture) {
 
-            EventUtil = {
+                if (!fn || !fn.call) {
+                    YAHOO.log(sType + " addListener failed, invalid callback", "error", "Event");
+                    return false;
+                }
 
-                /**
-                 * The number of times we should look for elements that are not
-                 * in the DOM at the time the event is requested after the document
-                 * has been loaded.  The default is 500@amp;40 ms, so it will poll
-                 * for 20 seconds or until all outstanding handlers are bound
-                 * (whichever comes first).
-                 * @property POLL_RETRYS
-                 * @type int
-                 * @static
-                 * @final
-                 */
-                POLL_RETRYS: 500,
-
-                /**
-                 * The poll interval in milliseconds
-                 * @property POLL_INTERVAL
-                 * @type int
-                 * @static
-                 * @final
-                 */
-                POLL_INTERVAL: 40,
-
-                /**
-                 * Element to bind, int constant
-                 * @property EL
-                 * @type int
-                 * @static
-                 * @final
-                 */
-                EL: 0,
-
-                /**
-                 * Type of event, int constant
-                 * @property TYPE
-                 * @type int
-                 * @static
-                 * @final
-                 */
-                TYPE: 1,
-
-                /**
-                 * Function to execute, int constant
-                 * @property FN
-                 * @type int
-                 * @static
-                 * @final
-                 */
-                FN: 2,
-
-                /**
-                 * Function wrapped for context correction and cleanup, int constant
-                 * @property WFN
-                 * @type int
-                 * @static
-                 * @final
-                 */
-                WFN: 3,
-
-                /**
-                 * Object passed in by the user that will be returned as a 
-                 * parameter to the callback, int constant.  Specific to
-                 * unload listeners
-                 * @property OBJ
-                 * @type int
-                 * @static
-                 * @final
-                 */
-                UNLOAD_OBJ: 3,
-
-                /**
-                 * Adjusted context, either the element we are registering the event
-                 * on or the custom object passed in by the listener, int constant
-                 * @property ADJ_SCOPE
-                 * @type int
-                 * @static
-                 * @final
-                 */
-                ADJ_SCOPE: 4,
-
-                /**
-                 * The original obj passed into addListener
-                 * @property OBJ
-                 * @type int
-                 * @static
-                 * @final
-                 */
-                OBJ: 5,
-
-                /**
-                 * The original context parameter passed into addListener
-                 * @property OVERRIDE
-                 * @type int
-                 * @static
-                 * @final
-                 */
-                OVERRIDE: 6,
-
-                /**
-                 * The original capture parameter passed into addListener
-                 * @property CAPTURE
-                 * @type int
-                 * @static
-                 * @final
-                 */
-                CAPTURE: 7,
-
-                /**
-                 * addListener/removeListener can throw errors in unexpected scenarios.
-                 * These errors are suppressed, the method returns false, and this property
-                 * is set
-                 * @property lastError
-                 * @static
-                 * @type Error
-                 */
-                lastError: null,
-
-                /**
-                 * Safari detection
-                 * @property isSafari
-                 * @private
-                 * @static
-                 * @deprecated use YAHOO.env.ua.webkit
-                 */
-                isSafari: YAHOO.env.ua.webkit,
-                
-                /**
-                 * webkit version
-                 * @property webkit
-                 * @type string
-                 * @private
-                 * @static
-                 * @deprecated use YAHOO.env.ua.webkit
-                 */
-                webkit: YAHOO.env.ua.webkit,
-                
-                /**
-                 * IE detection 
-                 * @property isIE
-                 * @private
-                 * @static
-                 * @deprecated use YAHOO.env.ua.ie
-                 */
-                isIE: isIE,
-
-                /**
-                 * poll handle
-                 * @property _interval
-                 * @static
-                 * @private
-                 */
-                _interval: null,
-
-                /**
-                 * document readystate poll handle
-                 * @property _dri
-                 * @static
-                 * @private
-                 */
-                 _dri: null,
-
-
-                /**
-                 * Map of special event types
-                 * @property _specialTypes
-                 * @static
-                 * @private
-                 */
-                _specialTypes: {
-                    focusin: (isIE ? "focusin" : "focus"),
-                    focusout: (isIE ? "focusout" : "blur")
-                },
-
-
-                /**
-                 * True when the document is initially usable
-                 * @property DOMReady
-                 * @type boolean
-                 * @static
-                 */
-                DOMReady: false,
-
-                /**
-                 * Errors thrown by subscribers of custom events are caught
-                 * and the error message is written to the debug console.  If
-                 * this property is set to true, it will also re-throw the
-                 * error.
-                 * @property throwErrors
-                 * @type boolean
-                 * @default false
-                 */
-                throwErrors: false,
-
-
-                /**
-                 * @method startInterval
-                 * @static
-                 * @private
-                 */
-                startInterval: function() {
-                    if (!EventUtil._interval) {
-                        // var self = this;
-                        // var callback = function() { self._tryPreloadAttach(); };
-                        // this._interval = setInterval(callback, this.POLL_INTERVAL);
-                        EventUtil._interval =
-                            YAHOO.lang.later(
-                                EventUtil.POLL_INTERVAL,
-                                EventUtil,
-                                EventUtil._tryPreloadAttach,
-                                null, true);
+                // The el argument can be an array of elements or element ids.
+                if ( this._isValidCollection(el)) {
+                    var ok = true;
+                    for (var i=0,len=el.length; i<len; ++i) {
+                        ok = this.on(el[i],
+                                       sType,
+                                       fn,
+                                       obj,
+                                       overrideContext) && ok;
                     }
-                },
+                    return ok;
 
-                /**
-                 * Executes the supplied callback when the item with the supplied
-                 * id is found.  This is meant to be used to execute behavior as
-                 * soon as possible as the page loads.  If you use this after the
-                 * initial page load it will poll for a fixed time for the element.
-                 * The number of times it will poll and the frequency are
-                 * configurable.  By default it will poll for 10 seconds.
-                 *
-                 * <p>The callback is executed with a single parameter:
-                 * the custom object parameter, if provided.</p>
-                 *
-                 * @method onAvailable
-                 *
-                 * @param {string||string[]}   id the id of the element, or an array
-                 * of ids to look for.
-                 * @param {function} fn what to execute when the element is found.
-                 * @param {object}   obj an optional object to be passed back as
-                 *                   a parameter to fn.
-                 * @param {boolean|object}  overrideContext If set to true, fn will execute
-                 *                   in the context of obj, if set to an object it
-                 *                   will execute in the context of that object
-                 * @param checkContent {boolean} check child node readiness (onContentReady)
-                 * @static
-                 */
-                onAvailable: function(id, fn, obj, overrideContext, checkContent) {
+                } else if (YAHOO.lang.isString(el)) {
+                    var oEl = this.getEl(el);
+                    // If the el argument is a string, we assume it is
+                    // actually the id of the element.  If the page is loaded
+                    // we convert el to the actual element, otherwise we
+                    // defer attaching the event until onload event fires
 
-                    var a = (isString(id)) ? [id] : id,
-                        i;
-
-                    for ( i = 0; i < a.length; ++i ) {
-                        onAvailStack.push({
-                            id : a[i], 
-                            fn : fn, 
-                            obj: obj, 
-                            overrideContext: overrideContext, 
-                            checkReady     : checkContent
+                    // check to see if we need to delay hooking up the event
+                    // until after the page loads.
+                    if (oEl) {
+                        el = oEl;
+                    } else {
+                        // defer adding the event until the element is available
+                        this.onAvailable(el, function() {
+                           YAHOO.util.Event._addListener(el, sType, fn, obj, overrideContext, bCapture);
                         });
                     }
+                }
+
+                // Element should be an html element or an array if we get
+                // here.
+                if (!el) {
+                    // this.logger.debug("unable to attach event " + sType);
+                    return false;
+                }
+
+                // we need to make sure we fire registered unload events
+                // prior to automatically unhooking them.  So we hang on to
+                // these instead of attaching them to the window and fire the
+                // handles explicitly during our one unload event.
+                if ("unload" == sType && obj !== this) {
+                    unloadListeners[unloadListeners.length] =
+                            [el, sType, fn, obj, overrideContext];
+                    return true;
+                }
+
+                // this.logger.debug("Adding handler: " + el + ", " + sType);
 
                     retryCount = EventUtil.POLL_RETRYS;
 
@@ -462,45 +574,323 @@ if (!YAHOO.util.Event) {
                         YAHOO.log(sType + " addListener failed, invalid callback", "error", "Event");
                         return false;
                     }
+                }
 
-                    // The el argument can be an array of elements or element ids.
-                    if ( EventUtil._isValidCollection(el)) {
-                        for (i=0,len=el.length; i<len; ++i) {
-                            ok = EventUtil.on(el[i], 
-                                           sType, 
-                                           fn, 
-                                           obj, 
-                                           overrideContext) && ok;
-                        }
-                        return ok;
+                // wrap the function so we can return the obj object when
+                // the event fires;
+                var wrappedFn = function(e) {
+                        return fn.call(context, YAHOO.util.Event.getEvent(e, el),
+                                obj);
+                    };
 
-                    } else if (isString(el)) {
-                        oEl = EventUtil.getEl(el);
-                        // If the el argument is a string, we assume it is 
-                        // actually the id of the element.  If the page is loaded
-                        // we convert el to the actual element, otherwise we 
-                        // defer attaching the event until onload event fires
+                var li = [el, sType, fn, wrappedFn, context, obj, overrideContext, bCapture];
+                var index = listeners.length;
+                // cache the listener so we can try to automatically unload
+                listeners[index] = li;
 
-                        // check to see if we need to delay hooking up the event 
-                        // until after the page loads.
-                        if (oEl) {
-                            el = oEl;
-                        } else {
-                            // defer adding the event until the element is available
-                            EventUtil.onAvailable(el, function() {
-                               EventUtil._addListener(el, sType, fn, obj, overrideContext, bCapture);
-                            });
+                try {
+                    this._simpleAdd(el, sType, wrappedFn, bCapture);
+                } catch(ex) {
+                    // handle an error trying to attach an event.  If it fails
+                    // we need to clean up the cache
+                    this.lastError = ex;
+                    this.removeListener(el, sType, fn);
+                    return false;
+                }
 
-                            return true;
+                return true;
+
+            },
+
+            /**
+             * Checks to see if the type requested is a special type
+             * (as defined by the _specialTypes hash), and (if so) returns
+             * the special type name.
+             *
+             * @method _getType
+             *
+             * @param {String}   sType     The type to look up
+             * @private
+             */
+            _getType: function (type) {
+
+                return this._specialTypes[type] || type;
+
+            },
+
+
+            /**
+             * Appends an event handler
+             *
+             * @method addListener
+             *
+             * @param {String|HTMLElement|Array|NodeList} el An id, an element
+             *  reference, or a collection of ids and/or elements to assign the
+             *  listener to.
+             * @param {String}   sType     The type of event to append
+             * @param {Function} fn        The method the event invokes
+             * @param {Object}   obj    An arbitrary object that will be
+             *                             passed as a parameter to the handler
+             * @param {Boolean|object}  overrideContext  If true, the obj passed in becomes
+             *                             the execution context of the listener. If an
+             *                             object, this object becomes the execution
+             *                             context.
+             * @return {Boolean} True if the action was successful or defered,
+             *                        false if one or more of the elements
+             *                        could not have the listener attached,
+             *                        or if the operation throws an exception.
+             * @static
+             */
+            addListener: function (el, sType, fn, obj, overrideContext) {
+
+                var capture = ((sType == FOCUSIN || sType == FOCUSOUT) && !YAHOO.env.ua.ie) ? true : false;
+
+                return this._addListener(el, this._getType(sType), fn, obj, overrideContext, capture);
+
+            },
+
+
+            /**
+             * Attaches a focusin event listener to the specified element for
+             * the purpose of listening for the focus event on the element's
+             * descendants.
+             * @method addFocusListener
+             *
+             * @param {String|HTMLElement|Array|NodeList} el An id, an element
+             *  reference, or a collection of ids and/or elements to assign the
+             *  listener to.
+             * @param {Function} fn        The method the event invokes
+             * @param {Object}   obj    An arbitrary object that will be
+             *                             passed as a parameter to the handler
+             * @param {Boolean|object}  overrideContext  If true, the obj passed in becomes
+             *                             the execution context of the listener. If an
+             *                             object, this object becomes the execution
+             *                             context.
+             * @return {Boolean} True if the action was successful or defered,
+             *                        false if one or more of the elements
+             *                        could not have the listener attached,
+             *                        or if the operation throws an exception.
+             * @static
+            * @deprecated use YAHOO.util.Event.on and specify "focusin" as the event type.
+             */
+            addFocusListener: function (el, fn, obj, overrideContext) {
+                return this.on(el, FOCUSIN, fn, obj, overrideContext);
+            },
+
+
+            /**
+             * Removes a focusin event listener to the specified element for
+             * the purpose of listening for the focus event on the element's
+             * descendants.
+             *
+             * @method removeFocusListener
+             *
+             * @param {String|HTMLElement|Array|NodeList} el An id, an element
+             *  reference, or a collection of ids and/or elements to remove
+             *  the listener from.
+             * @param {Function} fn the method the event invokes.  If fn is
+             *  undefined, then all event handlers for the type of event are
+             *  removed.
+             * @return {boolean} true if the unbind was successful, false
+             *  otherwise.
+             * @static
+             * @deprecated use YAHOO.util.Event.removeListener and specify "focusin" as the event type.
+             */
+            removeFocusListener: function (el, fn) {
+                return this.removeListener(el, FOCUSIN, fn);
+            },
+
+            /**
+             * Attaches a focusout event listener to the specified element for
+             * the purpose of listening for the blur event on the element's
+             * descendants.
+             *
+             * @method addBlurListener
+             *
+             * @param {String|HTMLElement|Array|NodeList} el An id, an element
+             *  reference, or a collection of ids and/or elements to assign the
+             *  listener to.
+             * @param {Function} fn        The method the event invokes
+             * @param {Object}   obj    An arbitrary object that will be
+             *                             passed as a parameter to the handler
+             * @param {Boolean|object}  overrideContext  If true, the obj passed in becomes
+             *                             the execution context of the listener. If an
+             *                             object, this object becomes the execution
+             *                             context.
+             * @return {Boolean} True if the action was successful or defered,
+             *                        false if one or more of the elements
+             *                        could not have the listener attached,
+             *                        or if the operation throws an exception.
+             * @static
+             * @deprecated use YAHOO.util.Event.on and specify "focusout" as the event type.
+             */
+            addBlurListener: function (el, fn, obj, overrideContext) {
+                return this.on(el, FOCUSOUT, fn, obj, overrideContext);
+            },
+
+            /**
+             * Removes a focusout event listener to the specified element for
+             * the purpose of listening for the blur event on the element's
+             * descendants.
+             *
+             * @method removeBlurListener
+             *
+             * @param {String|HTMLElement|Array|NodeList} el An id, an element
+             *  reference, or a collection of ids and/or elements to remove
+             *  the listener from.
+             * @param {Function} fn the method the event invokes.  If fn is
+             *  undefined, then all event handlers for the type of event are
+             *  removed.
+             * @return {boolean} true if the unbind was successful, false
+             *  otherwise.
+             * @static
+             * @deprecated use YAHOO.util.Event.removeListener and specify "focusout" as the event type.
+             */
+            removeBlurListener: function (el, fn) {
+                return this.removeListener(el, FOCUSOUT, fn);
+            },
+
+            /**
+             * Removes an event listener
+             *
+             * @method removeListener
+             *
+             * @param {String|HTMLElement|Array|NodeList} el An id, an element
+             *  reference, or a collection of ids and/or elements to remove
+             *  the listener from.
+             * @param {String} sType the type of event to remove.
+             * @param {Function} fn the method the event invokes.  If fn is
+             *  undefined, then all event handlers for the type of event are
+             *  removed.
+             * @return {boolean} true if the unbind was successful, false
+             *  otherwise.
+             * @static
+             */
+            removeListener: function(el, sType, fn) {
+                var i, len, li;
+
+                sType = this._getType(sType);
+
+                // The el argument can be a string
+                if (typeof el == "string") {
+                    el = this.getEl(el);
+                // The el argument can be an array of elements or element ids.
+                } else if ( this._isValidCollection(el)) {
+                    var ok = true;
+                    for (i=el.length-1; i>-1; i--) {
+                        ok = ( this.removeListener(el[i], sType, fn) && ok );
+                    }
+                    return ok;
+                }
+
+                if (!fn || !fn.call) {
+                    // this.logger.debug("Error, function is not valid " + fn);
+                    //return false;
+                    return this.purgeElement(el, false, sType);
+                }
+
+                if ("unload" == sType) {
+
+                    for (i=unloadListeners.length-1; i>-1; i--) {
+                        li = unloadListeners[i];
+                        if (li &&
+                            li[0] == el &&
+                            li[1] == sType &&
+                            li[2] == fn) {
+                                unloadListeners.splice(i, 1);
+                                // unloadListeners[i]=null;
+                                return true;
                         }
                     }
 
-                    // Element should be an html element or an array if we get 
-                    // here.
-                    if (!el) {
-                        // this.logger.debug("unable to attach event " + sType);
-                        return false;
+                    return false;
+                }
+
+                var cacheItem = null;
+
+                // The index is a hidden parameter; needed to remove it from
+                // the method signature because it was tempting users to
+                // try and take advantage of it, which is not possible.
+                var index = arguments[3];
+
+                if ("undefined" === typeof index) {
+                    index = this._getCacheIndex(listeners, el, sType, fn);
+                }
+
+                if (index >= 0) {
+                    cacheItem = listeners[index];
+                }
+
+                if (!el || !cacheItem) {
+                    // this.logger.debug("cached listener not found");
+                    return false;
+                }
+
+                // this.logger.debug("Removing handler: " + el + ", " + sType);
+
+                var bCapture = cacheItem[this.CAPTURE] === true ? true : false;
+
+                try {
+                    this._simpleRemove(el, sType, cacheItem[this.WFN], bCapture);
+                } catch(ex) {
+                    this.lastError = ex;
+                    return false;
+                }
+
+                // removed the wrapped handler
+                delete listeners[index][this.WFN];
+                delete listeners[index][this.FN];
+                listeners.splice(index, 1);
+                // listeners[index]=null;
+
+                return true;
+
+            },
+
+            /**
+             * Returns the event's target element.  Safari sometimes provides
+             * a text node, and this is automatically resolved to the text
+             * node's parent so that it behaves like other browsers.
+             * @method getTarget
+             * @param {Event} ev the event
+             * @param {boolean} resolveTextNode when set to true the target's
+             *                  parent will be returned if the target is a
+             *                  text node.  @deprecated, the text node is
+             *                  now resolved automatically
+             * @return {HTMLElement} the event's target
+             * @static
+             */
+            getTarget: function(ev, resolveTextNode) {
+                var t = ev.target || ev.srcElement;
+                return this.resolveTextNode(t);
+            },
+
+            /**
+             * In some cases, some browsers will return a text node inside
+             * the actual element that was targeted.  This normalizes the
+             * return value for getTarget and getRelatedTarget.
+             *
+             * If accessing a property of the node throws an error, this is
+             * probably the anonymous div wrapper Gecko adds inside text
+             * nodes.  This likely will only occur when attempting to access
+             * the relatedTarget.  In this case, we now return null because
+             * the anonymous div is completely useless and we do not know
+             * what the related target was because we can't even get to
+             * the element's parent node.
+             *
+             * @method resolveTextNode
+             * @param {HTMLElement} node node to resolve
+             * @return {HTMLElement} the normized node
+             * @static
+             */
+            resolveTextNode: function(n) {
+                try {
+                    if (n && 3 == n.nodeType) {
+                        return n.parentNode;
                     }
+                } catch(e) {
+                    return null;
+                }
 
                     // we need to make sure we fire registered unload events 
                     // prior to automatically unhooking them.  So we hang on to 
@@ -526,11 +916,31 @@ if (!YAHOO.util.Event) {
                         }
                     }
 
-                    // wrap the function so we can return the obj object when
-                    // the event fires;
-                    function wrappedFn(e) {
-                        return fn.call(context, EventUtil.getEvent(e, el), 
-                                obj);
+            /**
+             * Returns the pageX and pageY properties as an indexed array.
+             * @method getXY
+             * @param {Event} ev the event
+             * @return {[x, y]} the pageX and pageY properties of the event
+             * @static
+             */
+            getXY: function(ev) {
+                return [this.getPageX(ev), this.getPageY(ev)];
+            },
+
+            /**
+             * Returns the event's related target
+             * @method getRelatedTarget
+             * @param {Event} ev the event
+             * @return {HTMLElement} the event's relatedTarget
+             * @static
+             */
+            getRelatedTarget: function(ev) {
+                var t = ev.relatedTarget;
+                if (!t) {
+                    if (ev.type == "mouseout") {
+                        t = ev.toElement;
+                    } else if (ev.type == "mouseover") {
+                        t = ev.fromElement;
                     }
 
                     li = [el, sType, fn, wrappedFn, context, obj, overrideContext, bCapture];
@@ -539,199 +949,47 @@ if (!YAHOO.util.Event) {
                     listeners[index] = li;
 
                     try {
-                        EventUtil._simpleAdd(el, sType, wrappedFn, bCapture);
+                        ev.time = t;
                     } catch(ex) {
-                        // handle an error trying to attach an event.  If it fails
-                        // we need to clean up the cache
-                        EventUtil.lastError = ex;
-                        EventUtil.removeListener(el, sType, fn);
-                        return false;
+                        this.lastError = ex;
+                        return t;
                     }
 
-                    return true;
-                    
-                },
+            /**
+             * Prevents the default behavior of the event
+             * @method preventDefault
+             * @param {Event} ev the event
+             * @static
+             */
+            preventDefault: function(ev) {
+                if (ev.preventDefault) {
+                    ev.preventDefault();
+                } else {
+                    ev.returnValue = false;
+                }
+            },
 
-                /**
-                 * Checks to see if the type requested is a special type 
-                 * (as defined by the _specialTypes hash), and (if so) returns 
-                 * the special type name.
-                 *
-                 * @method _getType
-                 *
-                 * @param {String}   sType     The type to look up
-                 * @private
-                 */
-                _getType: function (type) {
-                
-                    return EventUtil._specialTypes[type] || type;
-                    
-                },
+            /**
+             * Finds the event in the window object, the caller's arguments, or
+             * in the arguments of another method in the callstack.  This is
+             * executed automatically for events registered through the event
+             * manager, so the implementer should not normally need to execute
+             * this function at all.
+             * @method getEvent
+             * @param {Event} e the event parameter from the handler
+             * @param {HTMLElement} boundEl the element the listener is attached to
+             * @return {Event} the event
+             * @static
+             */
+            getEvent: function(e, boundEl) {
+                var ev = e || window.event;
 
-
-                /**
-                 * Appends an event handler
-                 *
-                 * @method addListener
-                 *
-                 * @param {String|HTMLElement|Array|NodeList} el An id, an element 
-                 *  reference, or a collection of ids and/or elements to assign the 
-                 *  listener to.
-                 * @param {String}   sType     The type of event to append
-                 * @param {Function} fn        The method the event invokes
-                 * @param {Object}   obj    An arbitrary object that will be 
-                 *                             passed as a parameter to the handler
-                 * @param {Boolean|object}  overrideContext  If true, the obj passed in becomes
-                 *                             the execution context of the listener. If an
-                 *                             object, this object becomes the execution
-                 *                             context.
-                 * @return {Boolean} True if the action was successful or defered,
-                 *                        false if one or more of the elements 
-                 *                        could not have the listener attached,
-                 *                        or if the operation throws an exception.
-                 * @static
-                 */
-                addListener: function (el, sType, fn, obj, overrideContext) {
-
-                    var capture = ((sType == FOCUSIN || sType == FOCUSOUT) && !isIE) ? true : false;
-
-                    return EventUtil._addListener(el, EventUtil._getType(sType), fn, obj, overrideContext, capture);
-
-                },
-
-
-                /**
-                 * Attaches a focusin event listener to the specified element for 
-                 * the purpose of listening for the focus event on the element's 
-                 * descendants.
-                 * @method addFocusListener
-                 *
-                 * @param {String|HTMLElement|Array|NodeList} el An id, an element 
-                 *  reference, or a collection of ids and/or elements to assign the 
-                 *  listener to.
-                 * @param {Function} fn        The method the event invokes
-                 * @param {Object}   obj    An arbitrary object that will be 
-                 *                             passed as a parameter to the handler
-                 * @param {Boolean|object}  overrideContext  If true, the obj passed in becomes
-                 *                             the execution context of the listener. If an
-                 *                             object, this object becomes the execution
-                 *                             context.
-                 * @return {Boolean} True if the action was successful or defered,
-                 *                        false if one or more of the elements 
-                 *                        could not have the listener attached,
-                 *                        or if the operation throws an exception.
-                 * @static
-                * @deprecated use YAHOO.util.Event.on and specify "focusin" as the event type.
-                 */
-                addFocusListener: function (el, fn, obj, overrideContext) {
-                    return EventUtil.on(el, FOCUSIN, fn, obj, overrideContext);
-                },          
-
-
-                /**
-                 * Removes a focusin event listener to the specified element for 
-                 * the purpose of listening for the focus event on the element's 
-                 * descendants.
-                 *
-                 * @method removeFocusListener
-                 *
-                 * @param {String|HTMLElement|Array|NodeList} el An id, an element 
-                 *  reference, or a collection of ids and/or elements to remove
-                 *  the listener from.
-                 * @param {Function} fn the method the event invokes.  If fn is
-                 *  undefined, then all event handlers for the type of event are 
-                 *  removed.
-                 * @return {boolean} true if the unbind was successful, false 
-                 *  otherwise.
-                 * @static
-                 * @deprecated use YAHOO.util.Event.removeListener and specify "focusin" as the event type.
-                 */
-                removeFocusListener: function (el, fn) { 
-                    return EventUtil.removeListener(el, FOCUSIN, fn);
-                },
-
-                /**
-                 * Attaches a focusout event listener to the specified element for 
-                 * the purpose of listening for the blur event on the element's 
-                 * descendants.
-                 *
-                 * @method addBlurListener
-                 *
-                 * @param {String|HTMLElement|Array|NodeList} el An id, an element 
-                 *  reference, or a collection of ids and/or elements to assign the 
-                 *  listener to.
-                 * @param {Function} fn        The method the event invokes
-                 * @param {Object}   obj    An arbitrary object that will be 
-                 *                             passed as a parameter to the handler
-                 * @param {Boolean|object}  overrideContext  If true, the obj passed in becomes
-                 *                             the execution context of the listener. If an
-                 *                             object, this object becomes the execution
-                 *                             context.
-                 * @return {Boolean} True if the action was successful or defered,
-                 *                        false if one or more of the elements 
-                 *                        could not have the listener attached,
-                 *                        or if the operation throws an exception.
-                 * @static
-                 * @deprecated use YAHOO.util.Event.on and specify "focusout" as the event type.
-                 */
-                addBlurListener: function (el, fn, obj, overrideContext) {
-                    return EventUtil.on(el, FOCUSOUT, fn, obj, overrideContext);
-                },          
-
-                /**
-                 * Removes a focusout event listener to the specified element for 
-                 * the purpose of listening for the blur event on the element's 
-                 * descendants.
-                 *
-                 * @method removeBlurListener
-                 *
-                 * @param {String|HTMLElement|Array|NodeList} el An id, an element 
-                 *  reference, or a collection of ids and/or elements to remove
-                 *  the listener from.
-                 * @param {Function} fn the method the event invokes.  If fn is
-                 *  undefined, then all event handlers for the type of event are 
-                 *  removed.
-                 * @return {boolean} true if the unbind was successful, false 
-                 *  otherwise.
-                 * @static
-                 * @deprecated use YAHOO.util.Event.removeListener and specify "focusout" as the event type.
-                 */
-                removeBlurListener: function (el, fn) { 
-                    return EventUtil.removeListener(el, FOCUSOUT, fn);
-                },
-
-                /**
-                 * Removes an event listener
-                 *
-                 * @method removeListener
-                 *
-                 * @param {String|HTMLElement|Array|NodeList} el An id, an element 
-                 *  reference, or a collection of ids and/or elements to remove
-                 *  the listener from.
-                 * @param {String} sType the type of event to remove.
-                 * @param {Function} fn the method the event invokes.  If fn is
-                 *  undefined, then all event handlers for the type of event are 
-                 *  removed.
-                 * @return {boolean} true if the unbind was successful, false 
-                 *  otherwise.
-                 * @static
-                 */
-                removeListener: function(el, sType, fn) {
-                    var ok = true,
-                        cacheItem = null,
-                        index = arguments[ 3 ], // not in the sig on purpose
-                        bCapture,
-                        i, len, li;
-
-                    sType = EventUtil._getType(sType);
-
-                    // The el argument can be a string
-                    if (typeof el == "string") {
-                        el = EventUtil.getEl(el);
-                    // The el argument can be an array of elements or element ids.
-                    } else if ( EventUtil._isValidCollection(el)) {
-                        for (i=el.length-1; i>-1; i--) {
-                            ok = ( EventUtil.removeListener(el[i], sType, fn) && ok );
+                if (!ev) {
+                    var c = this.getEvent.caller;
+                    while (c) {
+                        ev = c.arguments[0];
+                        if (ev && Event == ev.constructor) {
+                            break;
                         }
                         return ok;
                     }
@@ -756,16 +1014,37 @@ if (!YAHOO.util.Event) {
                             }
                         }
 
-                        return false;
+            /**
+             * Locating the saved event handler data by function ref
+             *
+             * @method _getCacheIndex
+             * @static
+             * @private
+             */
+            _getCacheIndex: function(a, el, sType, fn) {
+                for (var i=0, l=a.length; i<l; i=i+1) {
+                    var li = a[i];
+                    if ( li                 &&
+                         li[this.FN] == fn  &&
+                         li[this.EL] == el  &&
+                         li[this.TYPE] == sType ) {
+                        return i;
                     }
 
                     if ( index === undefined ) {
                         index = EventUtil._getCacheIndex(listeners, el, sType, fn);
                     }
 
-                    if (index >= 0) {
-                        cacheItem = listeners[index];
-                    }
+            /**
+             * Generates an unique ID for the element if it does not already
+             * have one.
+             * @method generateId
+             * @param el the element to create the id for
+             * @return {string} the resulting id of the element
+             * @static
+             */
+            generateId: function(el) {
+                var id = el.id;
 
                     if (!el || !cacheItem) {
                         // this.logger.debug("cached listener not found");
@@ -776,12 +1055,30 @@ if (!YAHOO.util.Event) {
 
                     bCapture = cacheItem[EventUtil.CAPTURE] === true ? true : false;
 
-                    try {
-                        EventUtil._simpleRemove(el, sType, cacheItem[EventUtil.WFN], bCapture);
-                    } catch(ex) {
-                        EventUtil.lastError = ex;
-                        return false;
-                    }
+            /**
+             * We want to be able to use getElementsByTagName as a collection
+             * to attach a group of events to.  Unfortunately, different
+             * browsers return different types of collections.  This function
+             * tests to determine if the object is array-like.  It will also
+             * fail if the object is an array, but is empty.
+             * @method _isValidCollection
+             * @param o the object to test
+             * @return {boolean} true if the object is array-like and populated
+             * @static
+             * @private
+             */
+            _isValidCollection: function(o) {
+                try {
+                    return ( o                     && // o is something
+                             typeof o !== "string" && // o is not a string
+                             o.length              && // o is indexed
+                             !o.tagName            && // o is not an HTML element
+                             !o.alert              && // o is not a window
+                             typeof o[0] !== "undefined" );
+                } catch(ex) {
+                    YAHOO.log("node access error (xframe?)", "warn");
+                    return false;
+                }
 
                     // removed the wrapped handler
                     delete listeners[index][EventUtil.WFN];
@@ -791,52 +1088,17 @@ if (!YAHOO.util.Event) {
 
                     return true;
 
-                },
-
-                /**
-                 * Returns the event's target element.  Safari sometimes provides
-                 * a text node, and this is automatically resolved to the text
-                 * node's parent so that it behaves like other browsers.
-                 * @method getTarget
-                 * @param {Event} ev the event
-                 * @param {boolean} resolveTextNode when set to true the target's
-                 *                  parent will be returned if the target is a 
-                 *                  text node.  @deprecated, the text node is
-                 *                  now resolved automatically
-                 * @return {HTMLElement} the event's target
-                 * @static
-                 */
-                getTarget: function(ev, resolveTextNode) {
-                    var t = ev.target || ev.srcElement;
-                    return EventUtil.resolveTextNode(t);
-                },
-
-                /**
-                 * In some cases, some browsers will return a text node inside
-                 * the actual element that was targeted.  This normalizes the
-                 * return value for getTarget and getRelatedTarget.  
-                 *
-                 * If accessing a property of the node throws an error, this is
-                 * probably the anonymous div wrapper Gecko adds inside text
-                 * nodes.  This likely will only occur when attempting to access
-                 * the relatedTarget.  In this case, we now return null because
-                 * the anonymous div is completely useless and we do not know
-                 * what the related target was because we can't even get to
-                 * the element's parent node.
-                 *
-                 * @method resolveTextNode
-                 * @param {HTMLElement} node node to resolve
-                 * @return {HTMLElement} the normized node
-                 * @static
-                 */
-                resolveTextNode: function(n) {
-                    try {
-                        if (n && 3 == n.nodeType) {
-                            return n.parentNode;
-                        }
-                    } catch(e) { 
-                        return null;
-                    }
+            /**
+             * We cache elements bound by id because when the unload event
+             * fires, we can no longer use document.getElementById
+             * @method getEl
+             * @static
+             * @private
+             * @deprecated Elements are not cached any longer
+             */
+            getEl: function(id) {
+                return (typeof id === "string") ? document.getElementById(id) : id;
+            },
 
                     return n;
                 },
@@ -1149,48 +1411,36 @@ if (!YAHOO.util.Event) {
                         // before the window load notification
                         EventUtil._tryPreloadAttach();
 
+            /**
+             * Polling function that runs before the onload event fires,
+             * attempting to attach to DOM Nodes as soon as they are
+             * available
+             * @method _tryPreloadAttach
+             * @static
+             * @private
+             */
+            _tryPreloadAttach: function() {
+
+                if (onAvailStack.length === 0) {
+                    retryCount = 0;
+                    if (this._interval) {
+                        // clearInterval(this._interval);
+                        this._interval.cancel();
+                        this._interval = null;
                     }
-                },
+                    return;
+                }
 
-                /**
-                 * Fires the DOMReady event listeners the first time the document is
-                 * usable.
-                 * @method _ready
-                 * @static
-                 * @private
-                 */
-                _ready: function(e) {
-                    if (!EventUtil.DOMReady) {
-                        EventUtil.DOMReady=true;
+                if (this.locked) {
+                    return;
+                }
 
-                        // Fire the content ready custom event
-                        EventUtil.DOMReadyEvent.fire();
-
-                        // Remove the DOMContentLoaded (FF/Opera)
-                        EventUtil._simpleRemove(doc, "DOMContentLoaded", EventUtil._ready);
-                    }
-                },
-
-                /**
-                 * Polling function that runs before the onload event fires, 
-                 * attempting to attach to DOM Nodes as soon as they are 
-                 * available
-                 * @method _tryPreloadAttach
-                 * @static
-                 * @private
-                 */
-                _tryPreloadAttach: function() {
-                    var tryAgain, notAvail,
-                        i, len, item, el, ready=[];
-
-
-                    if (onAvailStack.length === 0) {
-                        retryCount = 0;
-                        if (EventUtil._interval) {
-                            // clearInterval(this._interval);
-                            EventUtil._interval.cancel();
-                            EventUtil._interval = null;
-                        } 
+                if (this.isIE) {
+                    // Hold off if DOMReady has not fired and check current
+                    // readyState to protect against the IE operation aborted
+                    // issue.
+                    if (!this.DOMReady) {
+                        this.startInterval();
                         return;
                     }
 
@@ -1208,7 +1458,14 @@ if (!YAHOO.util.Event) {
                         }
                     }
 
-                    EventUtil.locked = true;
+                // keep trying until after the page is loaded.  We need to
+                // check the page load state prior to trying to bind the
+                // elements so that we can be certain all elements have been
+                // tested appropriately
+                var tryAgain = !loadComplete;
+                if (!tryAgain) {
+                    tryAgain = (retryCount > 0 && onAvailStack.length > 0);
+                }
 
                     // this.logger.debug("tryPreloadAttach");
 
@@ -1235,6 +1492,13 @@ if (!YAHOO.util.Event) {
                         }
                         item.fn.call(context, item.obj);
                     }
+                }
+
+                // make sure onContentReady fires after onAvailable
+                for (i=0, len=ready.length; i<len; i=i+1) {
+                    item = ready[i];
+                    executeItem(this.getEl(item.id), item);
+                }
 
                     // onAvailable onContentReady
                     for (i=0, len=onAvailStack.length; i<len; i=i+1) {
@@ -1283,104 +1547,99 @@ if (!YAHOO.util.Event) {
                         }
                     }
 
-                    EventUtil.locked = false;
+            /**
+             * Returns all listeners attached to the given element via addListener.
+             * Optionally, you can specify a specific type of event to return.
+             * @method getListeners
+             * @param el {HTMLElement|string} the element or element id to inspect
+             * @param sType {string} optional type of listener to return. If
+             * left out, all listeners will be returned
+             * @return {Object} the listener. Contains the following fields:
+             * &nbsp;&nbsp;type:   (string)   the type of event
+             * &nbsp;&nbsp;fn:     (function) the callback supplied to addListener
+             * &nbsp;&nbsp;obj:    (object)   the custom object supplied to addListener
+             * &nbsp;&nbsp;adjust: (boolean|object)  whether or not to adjust the default context
+             * &nbsp;&nbsp;scope: (boolean)  the derived context based on the adjust parameter
+             * &nbsp;&nbsp;index:  (int)      its position in the Event util listener cache
+             * @static
+             */
+            getListeners: function(el, sType) {
+                var results=[], searchLists;
+                if (!sType) {
+                    searchLists = [listeners, unloadListeners];
+                } else if (sType === "unload") {
+                    searchLists = [unloadListeners];
+                } else {
+                    sType = this._getType(sType);
+                    searchLists = [listeners];
+                }
 
-                },
+                var oEl = (YAHOO.lang.isString(el)) ? this.getEl(el) : el;
 
-                /**
-                 * Removes all listeners attached to the given element via addListener.
-                 * Optionally, the node's children can also be purged.
-                 * Optionally, you can specify a specific type of event to remove.
-                 * @method purgeElement
-                 * @param {HTMLElement} el the element to purge
-                 * @param {boolean} recurse recursively purge this element's children
-                 * as well.  Use with caution.
-                 * @param {string} type optional type of listener to purge. If
-                 * left out, all listeners will be removed
-                 * @static
-                 */
-                purgeElement: function(el, recurse, type) {
-                    var getSubs = EventUtil.getListeners,
-                        ignore  = EventUtil.removeListener,
-                        subs, descendants, dsubs, i;
-
-                    el = ( isString( el ) ) ? EventUtil.getEl( el ) : el;
-
-                    if ( el ) {
-                        subs = getSubs( el, type );
-
-                        if ( recurse && el.getElementsByTagName ) {
-                            descendants = el.getElementsByTagName( '*' ) || [];
-
-                            for ( i = descendants.length - 1; i >= 0; --i ) {
-                                dsubs = getSubs( descendants[ i ], type );
-                                if ( dsubs ) {
-                                    subs.push.apply( subs, dsubs );
-                                }
+                for (var j=0;j<searchLists.length; j=j+1) {
+                    var searchList = searchLists[j];
+                    if (searchList) {
+                        for (var i=0,len=searchList.length; i<len ; ++i) {
+                            var l = searchList[i];
+                            if ( l  && l[this.EL] === oEl &&
+                                    (!sType || sType === l[this.TYPE]) ) {
+                                results.push({
+                                    type:   l[this.TYPE],
+                                    fn:     l[this.FN],
+                                    obj:    l[this.OBJ],
+                                    adjust: l[this.OVERRIDE],
+                                    scope:  l[this.ADJ_SCOPE],
+                                    index:  i
+                                });
                             }
                         }
 
-                        for ( i = subs.length - 1; i >= 0; --i ) {
-                            ignore( el, subs[ i ].type, subs[ i ].fn );
-                        }
-                    }
-                },
+            /**
+             * Removes all listeners registered by pe.event.  Called
+             * automatically during the unload event.
+             * @method _unload
+             * @static
+             * @private
+             */
+            _unload: function(e) {
 
-                /**
-                 * Returns all listeners attached to the given element via addListener.
-                 * Optionally, you can specify a specific type of event to return.
-                 * @method getListeners
-                 * @param el {HTMLElement|string} the element or element id to inspect 
-                 * @param sType {string} optional type of listener to return. If
-                 * left out, all listeners will be returned
-                 * @return {Object} the listener. Contains the following fields:
-                 * &nbsp;&nbsp;type:   (string)   the type of event
-                 * &nbsp;&nbsp;fn:     (function) the callback supplied to addListener
-                 * &nbsp;&nbsp;obj:    (object)   the custom object supplied to addListener
-                 * &nbsp;&nbsp;adjust: (boolean|object)  whether or not to adjust the default context
-                 * &nbsp;&nbsp;scope: (boolean)  the derived context based on the adjust parameter
-                 * &nbsp;&nbsp;index:  (int)      its position in the Event util listener cache
-                 * @static
-                 */           
-                getListeners: function(el, sType) {
-                    var results = [],
-                        oEl     = (isString(el)) ? EventUtil.getEl(el) : el,
-                        searchLists, i, len, j, list, sub,
-                        EL   = EventUtil.EL,
-                        TYPE = EventUtil.TYPE,
-                        FN   = EventUtil.FN,
-                        OBJ  = EventUtil.OBJ,
-                        OVERRIDE  = EventUtil.OVERRIDE,
-                        ADJ_SCOPE = EventUtil.ADJ_SCOPE;
+                var EU = YAHOO.util.Event, i, j, l, len, index,
+                         ul = unloadListeners.slice(), context;
 
-                    if (!sType) {
-                        searchLists = [listeners, unloadListeners];
-                    } else if (sType === "unload") {
-                        searchLists = [unloadListeners];
-                    } else {
-                        sType = EventUtil._getType(sType);
-                        searchLists = [listeners];
-                    }
-
-                    for ( j = 0; j < searchLists.length; ++j ) {
-                        list = searchLists[ j ];
-                        if ( list ) {
-                            for ( i = 0, len = list.length; i < len ; ++i) {
-                                sub = list[ i ];
-                                if ( sub && sub[ EL ] === oEl && 
-                                    (!sType || sType === sub[ TYPE ]) ) {
-                                    results.push({
-                                        type:   sub[ TYPE ],
-                                        fn:     sub[ FN ],
-                                        obj:    sub[ OBJ ],
-                                        adjust: sub[ OVERRIDE ],
-                                        scope:  sub[ ADJ_SCOPE ],
-                                        index:  i
-                                    });
-                                }
+                // execute and clear stored unload listeners
+                for (i=0, len=unloadListeners.length; i<len; ++i) {
+                    l = ul[i];
+                    if (l) {
+                        context = window;
+                        if (l[EU.ADJ_SCOPE]) {
+                            if (l[EU.ADJ_SCOPE] === true) {
+                                context = l[EU.UNLOAD_OBJ];
+                            } else {
+                                context = l[EU.ADJ_SCOPE];
                             }
                         }
                     }
+                }
+
+                l = null;
+                context = null;
+                unloadListeners = null;
+
+                // Remove listeners to handle IE memory leaks
+                // 2.5.0 listeners are removed for all browsers again.  FireFox preserves
+                // at least some listeners between page refreshes, potentially causing
+                // errors during page load (mouseover listeners firing before they
+                // should if the user moves the mouse at the correct moment).
+                if (listeners) {
+                    for (j=listeners.length-1; j>-1; j--) {
+                        l = listeners[j];
+                        if (l) {
+                            EU.removeListener(l[EU.EL], l[EU.TYPE], l[EU.FN], j);
+                        }
+                    }
+
+                EU._simpleRemove(window, "unload", EU._unload);
+                EU._simpleRemove(window, "load", EU._load);
 
                     return (results.length) ? results : null;
                 },
@@ -1397,22 +1656,33 @@ if (!YAHOO.util.Event) {
                     var i, j, l, len, index,
                         ul = unloadListeners.slice(), context;
 
-                    // execute and clear stored unload listeners
-                    for (i=0, len=unloadListeners.length; i<len; ++i) {
-                        l = ul[i];
-                        if (l) {
-                            context = win;
-                            if (l[EventUtil.ADJ_SCOPE]) {
-                                if (l[EventUtil.ADJ_SCOPE] === true) {
-                                    context = l[EventUtil.UNLOAD_OBJ];
-                                } else {
-                                    context = l[EventUtil.ADJ_SCOPE];
-                                }
-                            }
-                            l[EventUtil.FN].call(context, EventUtil.getEvent(e, l[EventUtil.EL]), l[EventUtil.UNLOAD_OBJ] );
-                            ul[i] = null;
-                        }
-                    }
+            /**
+             * Returns the scrollTop and scrollLeft.  Used to calculate the
+             * pageX and pageY in Internet Explorer
+             * @method _getScroll
+             * @static
+             * @private
+             */
+            _getScroll: function() {
+                var dd = document.documentElement, db = document.body;
+                if (dd && (dd.scrollTop || dd.scrollLeft)) {
+                    return [dd.scrollTop, dd.scrollLeft];
+                } else if (db) {
+                    return [db.scrollTop, db.scrollLeft];
+                } else {
+                    return [0, 0];
+                }
+            },
+
+            /**
+             * Used by old versions of CustomEvent, restored for backwards
+             * compatibility
+             * @method regCE
+             * @private
+             * @static
+             * @deprecated still here for backwards compatibility
+             */
+            regCE: function() {},
 
                     l = null;
                     context = null;
@@ -1542,19 +1812,19 @@ if (!YAHOO.util.Event) {
          *
          * @method on
          *
-         * @param {String|HTMLElement|Array|NodeList} el An id, an element 
-         *  reference, or a collection of ids and/or elements to assign the 
+         * @param {String|HTMLElement|Array|NodeList} el An id, an element
+         *  reference, or a collection of ids and/or elements to assign the
          *  listener to.
          * @param {String}   sType     The type of event to append
          * @param {Function} fn        The method the event invokes
-         * @param {Object}   obj    An arbitrary object that will be 
+         * @param {Object}   obj    An arbitrary object that will be
          *                             passed as a parameter to the handler
          * @param {Boolean|object}  overrideContext  If true, the obj passed in becomes
          *                             the execution context of the listener. If an
          *                             object, this object becomes the execution
          *                             context.
          * @return {Boolean} True if the action was successful or defered,
-         *                        false if one or more of the elements 
+         *                        false if one or more of the elements
          *                        could not have the listener attached,
          *                        or if the operation throws an exception.
          * @static
@@ -1576,8 +1846,8 @@ if (!YAHOO.util.Event) {
          * @see addBlurListener
          * @static
          * @deprecated use YAHOO.util.Event.on and specify "focusout" as the event type.
-         */     
-        EventUtil.onBlur = EventUtil.addBlurListener;
+         */
+        EU.onBlur = EU.addBlurListener;
 
     /*! DOMReady: based on work by: Dean Edwards/John Resig/Matthias Miller/Diego Perini */
 
@@ -1595,43 +1865,39 @@ if (!YAHOO.util.Event) {
                 };
             } else {
 
-                // Process onAvailable/onContentReady items when the 
+                // Process onAvailable/onContentReady items when the
                 // DOM is ready.
-                EventUtil.onDOMReady(
-                        EventUtil._tryPreloadAttach,
-                        EventUtil, true);
-                
-                EventUtil._dri = YAHOO.lang.later(
-                    EventUtil.POLL_INTERVAL,
-                    EventUtil,
-                    function( tmpNode ) {
-                        try {
-                            // throws an error if doc is not ready
-                            tmpNode.doScroll('left');
-                            EventUtil._dri.cancel();
-                            EventUtil._dri = null;
-                            tmpNode = null;
-                            EventUtil._ready();
-                        } catch (ex) { 
-                        }
-                    }, doc.createElement( 'p' ), true );
+                YAHOO.util.Event.onDOMReady(
+                        YAHOO.util.Event._tryPreloadAttach,
+                        YAHOO.util.Event, true);
+
+                var n = document.createElement('p');
+
+                EU._dri = setInterval(function() {
+                    try {
+                        // throws an error if doc is not ready
+                        n.doScroll('left');
+                        clearInterval(EU._dri);
+                        EU._dri = null;
+                        EU._ready();
+                        n = null;
+                    } catch (ex) {
+                    }
+                }, EU.POLL_INTERVAL);
             }
 
         // The document's readyState in Safari currently will
         // change to loaded/complete before images are loaded.
-        } else if (EventUtil.webkit && EventUtil.webkit < 525) {
+        } else if (EU.webkit && EU.webkit < 525) {
 
-            EventUtil._dri = YAHOO.lang.later(
-                EventUtil.POLL_INTERVAL,
-                EventUtil,
-                function() {
-                    var rs = doc.readyState;
-                    if ("loaded" == rs || "complete" == rs) {
-                        EventUtil._dri.cancel();
-                        EventUtil._dri = null;
-                        EventUtil._ready();
-                    }
-                }, null, true );
+            EU._dri = setInterval(function() {
+                var rs=document.readyState;
+                if ("loaded" == rs || "complete" == rs) {
+                    clearInterval(EU._dri);
+                    EU._dri = null;
+                    EU._ready();
+                }
+            }, EU.POLL_INTERVAL);
 
         // FireFox and Opera: These browsers provide a event for this
         // moment.  The latest WebKit releases now support this event.

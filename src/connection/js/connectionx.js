@@ -1,18 +1,10 @@
 /**
-  * @for Connect
+  * @for YAHOO.util.Connect
   */
 (function(){
 	var YCM = YAHOO.util.Connect,
-		YE = YAHOO.util.Event;
-   /**
-	* @description Property modified by setForm() to determine if the data
-	* should be submitted as an HTML form.
-	* @property _isFormSubmit
-	* @private
-	* @static
-	* @type boolean
-	*/
-	YCM._isFormSubmit = false;
+		YE = YAHOO.util.Event,
+		dM = document.documentMode ? document.documentMode : false;
 
    /**
 	* @description Property modified by setForm() to determine if a file(s)
@@ -62,7 +54,7 @@
     * @static
     * @type CustomEvent
     */
-	YCM.uploadEvent = new YAHOO.util.CustomEvent('upload'),
+	YCM.uploadEvent = new YAHOO.util.CustomEvent('upload');
 
    /**
 	* @description Determines whether YAHOO.util.Event is available and returns true or false.
@@ -254,8 +246,10 @@
 		// properties via createElement().  A different iframe creation
 		// pattern is required for IE.
 		var frameId = 'yuiIO' + this._transaction_id,
+			ie9 = (dM === 9) ? true : false,
 			io;
-		if(YAHOO.env.ua.ie){
+
+		if(YAHOO.env.ua.ie && !ie9){
 			io = document.createElement('<iframe id="' + frameId + '" name="' + frameId + '" />');
 
 			// IE will throw a security exception in an SSL environment if the
@@ -324,7 +318,7 @@
 		var frameId = 'yuiIO' + o.tId,
 		    uploadEncoding = 'multipart/form-data',
 		    io = document.getElementById(frameId),
-		    ie8 = (document.documentMode && document.documentMode === 8) ? true : false,
+		    ie8 = (dM >= 8) ? true : false,
 		    oConn = this,
 			args = (callback && callback.argument)?callback.argument:null,
             oElements,i,prop,obj, rawFormAttributes, uploadCallback;
@@ -414,7 +408,7 @@
 
 			obj = {
 			    tId : o.tId,
-			    argument : callback.argument
+			    argument : args
             };
 
 			try
